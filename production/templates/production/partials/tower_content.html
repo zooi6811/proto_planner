@@ -1,3 +1,14 @@
+{% if purchasing_shortfalls %}
+<div class="panel" style="border-left: 5px solid #f59e0b; background-color: #fef3c7; margin-bottom: 20px;">
+    <h3 style="color: #b45309; margin-top: 0;">🛒 Purchasing Action Required (Material Shortfalls)</h3>
+    <ul style="color: #92400e; font-weight: bold; padding-left: 20px;">
+        {% for alloc in purchasing_shortfalls %}
+            <li>URGENT: Purchase <strong>{{ alloc.shortfall_kg }} KG</strong> of {{ alloc.material.name }} for {{ alloc.job_order.jo_number }}.</li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
 {% if low_stock_materials %}
 <div class="panel" style="border-left: 5px solid #ef4444; background-color: #fef2f2; margin-bottom: 20px;">
     <h3 style="color: #b91c1c; margin-top: 0;">⚠️ Critical Inventory Alerts</h3>
@@ -12,13 +23,14 @@
 <div class="dashboard-grid" style="grid-template-columns: 2fr 1fr;">
     
     <div class="panel">
-        <h3 class="panel-title">Live Job Orders</h3>
+        <h3 class="panel-title">Live Job Orders & Fulfilment</h3>
         <table style="width: 100%; border-collapse: collapse; text-align: left;">
             <thead>
                 <tr style="border-bottom: 2px solid #cbd5e1; color: #64748b;">
                     <th style="padding: 10px 0;">JO Number</th>
                     <th>Customer</th>
                     <th>Extrusion Progress</th>
+                    <th>Warehouse Status</th>
                 </tr>
             </thead>
             <tbody>
@@ -26,13 +38,17 @@
                 <tr style="border-bottom: 1px solid #e2e8f0;">
                     <td style="padding: 15px 0; font-weight: bold;">{{ jo.jo_number }}</td>
                     <td>{{ jo.customer }}</td>
-                    <td style="width: 50%;">
+                    <td style="width: 40%;">
                         <div style="display: flex; align-items: center; gap: 10px;">
                             <div style="flex-grow: 1; background-color: #e2e8f0; height: 10px; border-radius: 5px; overflow: hidden;">
                                 <div style="width: {{ jo.extrusion_progress|stringformat:'.1f' }}%; max-width: 100%; background-color: #0284c7; height: 10px;"></div>
                             </div>
                             <span style="font-size: 0.9rem; font-weight: bold;">{{ jo.extrusion_progress }}%</span>
                         </div>
+                    </td>
+                    <td>
+                        <span style="color: #059669; font-weight: bold;">{{ jo.ready_to_ship_kg }} KG Ready</span><br>
+                        <span style="color: #94a3b8; font-size: 0.85rem;">Balance: {{ jo.order_balance_kg }} KG</span>
                     </td>
                 </tr>
                 {% endfor %}
@@ -43,7 +59,7 @@
     <div class="panel">
         <h3 class="panel-title">Recent Floor Activity</h3>
         
-        <h4 style="color: #e67e22; border-bottom: 1px solid #eee; padding-bottom: 5px;">Extrusion</h3>
+        <h4 style="color: #e67e22; border-bottom: 1px solid #eee; padding-bottom: 5px;">Extrusion</h4>
         <ul style="list-style: none; padding: 0; margin: 0; font-size: 0.95rem;">
             {% for log in recent_extrusion %}
             <li style="padding: 8px 0; border-bottom: 1px dashed #e2e8f0;">
@@ -53,7 +69,7 @@
             {% endfor %}
         </ul>
 
-        <h4 style="color: #9b59b6; border-bottom: 1px solid #eee; padding-bottom: 5px; margin-top: 20px;">Cutting</h3>
+        <h4 style="color: #9b59b6; border-bottom: 1px solid #eee; padding-bottom: 5px; margin-top: 20px;">Cutting</h4>
         <ul style="list-style: none; padding: 0; margin: 0; font-size: 0.95rem;">
             {% for log in recent_cutting %}
             <li style="padding: 8px 0; border-bottom: 1px dashed #e2e8f0;">

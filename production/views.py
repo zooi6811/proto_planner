@@ -2,42 +2,125 @@ from django.shortcuts import render, get_object_or_404
 from django.http import HttpResponse
 from .models import JobOrder, ExtrusionLog, CuttingLog, PackingLog, RawMaterial
 from django.db.models import F, Q
+from django.db import transaction
+from decimal import Decimal
+from .models import MaterialUsageLog, MaterialAllocation
+
+# -----------------------------------------------------------------------------
+# MATERIAL USAGE SUBMISSION
+# -----------------------------------------------------------------------------
+def submit_material_usage(request):
+    if request.method == "POST":
+        jo_id = request.POST.get('job_order')
+        material_id = request.POST.get('material_id')
+        
+        try:
+            amount_kg = float(request.POST.get('amount_kg'))
+        except ValueError:
+            return render(request, 'production/partials/error_message.html', {'error': "Invalid amount."})
+
+        if amount_kg <= 0:
+            return render(request, 'production/partials/error_message.html', {'error': "Amount must be greater than zero."})
+
+        job_order = get_object_or_404(JobOrder, id=jo_id)
+        material = get_object_or_404(RawMaterial, id=material_id)
+
+        usage_log = MaterialUsageLog.objects.create(
+            job_order=job_order,
+            material=material,
+            amount_kg=amount_kg,
+            operator_name="Extrusion Op"
+        )
+        
+        # Check for overuse warning
+        allocation = MaterialAllocation.objects.filter(job_order=job_order, material=material).first()
+        if allocation and allocation.is_overused:
+            warning_msg = f"⚠️ WARNING: You have exceeded the allocated limit for {material.name}!"
+            return render(request, 'production/partials/error_message.html', {'error': warning_msg})
+            
+        return HttpResponse(f"<div style='color: green; font-weight: bold;'>Successfully logged {amount_kg} KG of {material.name}.</div>")
 
 def operator_dashboard(request):
     job_orders = JobOrder.objects.all()
     return render(request, 'production/dashboard.html', {'job_orders': job_orders})
 
+from .models import ExtrusionSession, SessionMaterial # Ensure these are imported
+
 # -----------------------------------------------------------------------------
-# EXTRUSION SUBMISSION
+# STATEFUL EXTRUSION SESSIONS
 # -----------------------------------------------------------------------------
-def submit_extrusion(request):
+def load_machine_state(request, machine_no):
+    """Checks if a machine is currently running a job or is idle."""
+    active_session = ExtrusionSession.objects.filter(machine_no=machine_no, status='ACTIVE').first()
+    
+    if active_session:
+        return render(request, 'production/partials/active_run_ui.html', {'session': active_session})
+    else:
+        job_orders = JobOrder.objects.filter(is_completed=False, order_quantity_kg__gt=0).order_by('-id')[:20]
+        raw_materials = RawMaterial.objects.all()
+        return render(request, 'production/partials/start_session_ui.html', {
+            'machine_no': machine_no, 
+            'job_orders': job_orders,
+            'raw_materials': raw_materials
+        })
+
+def start_extrusion_session(request):
+    """Locks the machine, reserves the material, and starts the job."""
     if request.method == "POST":
         jo_id = request.POST.get('job_order')
+        machine_no = request.POST.get('machine_no')
+        shift = request.POST.get('shift')
+        target_amount = float(request.POST.get('target_amount'))
+        
+        job_order = get_object_or_404(JobOrder, id=jo_id)
+        
+        with transaction.atomic():
+            # Create the Active Session
+            session = ExtrusionSession.objects.create(
+                job_order=job_order, machine_no=machine_no, shift=shift, target_amount_kg=target_amount
+            )
+            
+            # Process reserved materials (Assuming frontend sends material_id and reserved_amount arrays)
+            material_ids = request.POST.getlist('material_ids')
+            reserved_amounts = request.POST.getlist('reserved_amounts')
+            
+            for mat_id, amount in zip(material_ids, reserved_amounts):
+                if float(amount) > 0:
+                    mat = RawMaterial.objects.select_for_update().get(id=mat_id)
+                    mat.current_stock_kg -= Decimal(str(amount)) # Deduct from warehouse immediately
+                    mat.save()
+                    
+                    SessionMaterial.objects.create(
+                        session=session, material=mat, reserved_kg=amount
+                    )
+                    
+        return load_machine_state(request, machine_no)
+
+def log_session_roll(request):
+    """Operator logs a roll to their currently active session."""
+    if request.method == "POST":
+        session_id = request.POST.get('session_id')
+        session = get_object_or_404(ExtrusionSession, id=session_id)
+        
         try:
             roll_weight = float(request.POST.get('roll_weight'))
             wastage = float(request.POST.get('wastage') or 0)
         except ValueError:
-            return render(request, 'production/partials/error_message.html', {'error': "Invalid input. Please enter numbers only."})
+            return HttpResponse("<div class='error'>Invalid numbers.</div>")
 
-        if roll_weight <= 0 or wastage < 0:
-            return render(request, 'production/partials/error_message.html', {'error': "Weights cannot be zero or negative."})
-        if wastage > (roll_weight * 0.5):
-            return render(request, 'production/partials/error_message.html', {'error': "Wastage is suspiciously high (> 50%). Please verify."})
-        if roll_weight > 300: 
-            return render(request, 'production/partials/error_message.html', {'error': f"A {roll_weight}kg roll exceeds the maximum machine limit."})
-
-        job_order = get_object_or_404(JobOrder, id=jo_id)
+        ExtrusionLog.objects.create(session=session, roll_weight_kg=roll_weight, wastage_kg=wastage)
         
-        ExtrusionLog.objects.create(
-            job_order=job_order,
-            machine_no=request.POST.get('machine'),
-            shift=request.POST.get('shift'),
-            roll_weight_kg=roll_weight,
-            wastage_kg=wastage,
-            operator_name="Extrusion Op"
-        )
-        job_order.refresh_from_db()
-        return render(request, 'production/partials/progress_bar.html', {'jo': job_order})
+        session.refresh_from_db() # Refresh to see if auto-stop triggered
+        if session.status == 'COMPLETED':
+            return HttpResponse("<div class='success'>Target Reached! Session Auto-Completed.</div>")
+            
+        return load_machine_state(request, session.machine_no)
+
+def stop_extrusion_session(request, session_id):
+    """Operator manually terminates the job early."""
+    session = get_object_or_404(ExtrusionSession, id=session_id)
+    session.stop_session()
+    return load_machine_state(request, session.machine_no)
 
 # -----------------------------------------------------------------------------
 # CUTTING SUBMISSION
@@ -141,16 +224,19 @@ def search_jobs(request):
 # DASHBOARD & TOWER LOGIC
 # -----------------------------------------------------------------------------
 def control_tower(request):
+    # Fetch physical stock warnings
     low_stock_materials = RawMaterial.objects.filter(current_stock_kg__lte=F('reorder_point_kg'))
-    active_jobs = JobOrder.objects.filter(order_quantity_kg__gt=0).order_by('-id')[:10]
-    recent_extrusion = ExtrusionLog.objects.select_related('job_order').order_by('-timestamp')[:5]
-    recent_cutting = CuttingLog.objects.select_related('job_order').order_by('-timestamp')[:5]
+    
+    # Fetch Hypothetical Stock (Shortfalls) that need purchasing
+    purchasing_shortfalls = MaterialAllocation.objects.filter(shortfall_kg__gt=0, job_order__is_completed=False)
+    
+    # Dashboard stats
+    active_jobs = JobOrder.objects.filter(is_completed=False).order_by('-id')[:10]
     
     context = {
         'low_stock_materials': low_stock_materials,
+        'purchasing_shortfalls': purchasing_shortfalls,
         'active_jobs': active_jobs,
-        'recent_extrusion': recent_extrusion,
-        'recent_cutting': recent_cutting,
     }
     if request.htmx:
         return render(request, 'production/partials/tower_content.html', context)

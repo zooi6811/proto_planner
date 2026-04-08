@@ -1,0 +1,36 @@
+<form hx-post="/start-session/" hx-target="#machine-workspace" style="width: 100%;">
+    {% csrf_token %}
+    <input type="hidden" name="machine_no" value="{{ machine_no }}">
+    
+    <div style="display: flex; justify-content: space-between; border-bottom: 2px solid #cbd5e1; padding-bottom: 10px; margin-bottom: 20px;">
+        <h2 style="margin: 0; color: #0284c7;">Start Run: Machine {{ machine_no }}</h2>
+        <select name="shift" required style="padding: 5px; font-weight: bold;"><option value="AM">AM Shift</option><option value="PM">PM Shift</option></select>
+    </div>
+
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+        <div>
+            <label class="input-label">Select Job Order</label>
+            <select name="job_order" required style="width: 100%; padding: 10px; margin-bottom: 15px;">
+                {% for jo in job_orders %}<option value="{{ jo.id }}">{{ jo.jo_number }} ({{ jo.customer }})</option>{% endfor %}
+            </select>
+            
+            <label class="input-label">Target Run Amount (KG)</label>
+            <input type="number" name="target_amount" required style="width: 100%; padding: 15px; font-size: 1.5rem;" placeholder="e.g. 500">
+        </div>
+
+        <div style="background: #e2e8f0; padding: 15px; border-radius: 8px;">
+            <label class="input-label">Reserve Materials</label>
+            <p style="font-size: 0.85rem; color: #64748b;">Enter the total KG of material bags you are setting aside for this run.</p>
+            
+            {% for mat in raw_materials %}
+            <div style="display: flex; gap: 10px; margin-bottom: 10px;">
+                <input type="hidden" name="material_ids" value="{{ mat.id }}">
+                <span style="flex-grow: 1; font-weight: bold;">{{ mat.name }}</span>
+                <input type="number" name="reserved_amounts" value="0" style="width: 100px; padding: 5px;" placeholder="KG">
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    
+    <button type="submit" class="btn-submit" style="margin-top: 20px; background-color: #10b981;">LOCK IN & START MACHINE</button>
+</form>

@@ -1,0 +1,33 @@
+<div style="width: 100%;">
+    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #cbd5e1; padding-bottom: 10px; margin-bottom: 20px;">
+        <div>
+            <h2 style="margin: 0; color: #059669;">🟢 ACTIVE RUN: {{ session.machine_no }}</h2>
+            <span style="color: #64748b; font-weight: bold;">{{ session.job_order.jo_number }} | {{ session.job_order.customer }}</span>
+        </div>
+        <button hx-post="/stop-session/{{ session.id }/" hx-target="#machine-workspace" style="background-color: #ef4444; color: white; padding: 10px 20px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer;">
+            STOP JOB EARLY
+        </button>
+    </div>
+
+    <div style="background: #f1f5f9; padding: 20px; border-radius: 8px; margin-bottom: 20px; text-align: center;">
+        <div style="font-size: 3rem; font-weight: 900; color: #0284c7;">
+            {{ session.total_output_kg }} <span style="font-size: 1.5rem; color: #94a3b8;">/ {{ session.target_amount_kg }} KG Target</span>
+        </div>
+        <p style="margin: 5px 0 0 0; color: #64748b; font-weight: bold;">Wastage: {{ session.total_wastage_kg }} KG</p>
+    </div>
+
+    <form hx-post="/log-session-roll/" hx-target="#machine-workspace" style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; background: white; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0;">
+        {% csrf_token %}
+        <input type="hidden" name="session_id" value="{{ session.id }}">
+        
+        <div>
+            <label class="input-label">New Roll Weight (KG)</label>
+            <input type="number" step="0.01" name="roll_weight" required style="width: 100%; padding: 15px; font-size: 1.5rem;">
+        </div>
+        <div>
+            <label class="input-label">Wastage (KG)</label>
+            <input type="number" step="0.01" name="wastage" value="0" style="width: 100%; padding: 15px; font-size: 1.5rem;">
+        </div>
+        <button type="submit" class="btn-submit" style="grid-column: span 2;">LOG ROLL TO SESSION</button>
+    </form>
+</div>
