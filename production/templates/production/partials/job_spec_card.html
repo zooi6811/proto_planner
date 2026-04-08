@@ -1,0 +1,36 @@
+<div style="background-color: #f8fafc; border: 2px solid #cbd5e1; border-radius: 8px; padding: 20px; margin-bottom: 20px;">
+    <h3 style="margin-top: 0; color: #0284c7; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px;">
+        📄 DIGITAL PRODUCTION FORM: {{ jo.jo_number }}
+    </h3>
+    
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; font-size: 1.1rem;">
+        <div><strong>Customer:</strong> {{ jo.customer }}</div>
+        <div><strong>PO Number:</strong> {{ jo.po_number }}</div>
+        
+        <div><strong>Dimensions:</strong> {{ jo.product_dimension }}</div>
+        <div><strong>Target Order:</strong> {{ jo.order_quantity_kg }} KG</div>
+        
+        <div style="grid-column: span 2;">
+            <strong>Formula / Material:</strong> 
+            {% if jo.recipe %}{{ jo.recipe.formula_code }}{% else %}Standard{% endif %}
+        </div>
+    </div>
+
+    <div style="display: flex; gap: 10px; margin-top: 20px; border-top: 1px dashed #cbd5e1; padding-top: 15px;">
+        <span style="padding: 5px 10px; border-radius: 4px; font-weight: bold; background-color: {% if jo.printing_required %}#fef08a{% else %}#e2e8f0{% endif %};">
+            Printing: {% if jo.printing_required %}YES{% else %}NO{% endif %}
+        </span>
+        <span style="padding: 5px 10px; border-radius: 4px; font-weight: bold; background-color: {% if jo.sealing_required %}#fef08a{% else %}#e2e8f0{% endif %};">
+            Sealing: {% if jo.sealing_required %}YES{% else %}NO{% endif %}
+        </span>
+        <span style="padding: 5px 10px; border-radius: 4px; font-weight: bold; background-color: {% if jo.slitting_required %}#fef08a{% else %}#e2e8f0{% endif %};">
+            Slitting: {% if jo.slitting_required %}YES{% else %}NO{% endif %}
+        </span>
+    </div>
+
+    {% if jo.remarks != "-" %}
+    <div style="margin-top: 15px; background-color: #fee2e2; padding: 10px; border-left: 4px solid #ef4444; color: #991b1b;">
+        <strong>⚠️ Remarks / Special Instructions:</strong> {{ jo.remarks }}
+    </div>
+    {% endif %}
+</div>

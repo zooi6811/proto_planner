@@ -15,4 +15,9 @@ urlpatterns = [
     path('get-extrusion/', views.get_extrusion_form, name='get_extrusion'),
     path('get-cutting/', views.get_cutting_form, name='get_cutting'),
     path('get-packing/', views.get_packing_form, name='get_packing'),
+
+    path('get-job-specs/<int:jo_id>/', views.get_job_specs, name='get_job_specs'),
+
+    # Add this to your HTMX URLs
+    path('search-jobs/', views.search_jobs, name='search_jobs'),
 ]

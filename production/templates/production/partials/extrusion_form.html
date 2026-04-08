@@ -1,5 +1,6 @@
 <form hx-post="/submit-extrusion/" hx-target="#feedback-container" hx-swap="innerHTML" class="dashboard-grid">
     {% csrf_token %}
+    
     <div class="panel">
         <div class="panel-title">1. Extrusion Setup</div>
         <label class="input-label">Select Machine</label>
@@ -20,19 +21,29 @@
 
     <div class="panel">
         <div class="panel-title">2. Active Job Order</div>
-        <div class="radio-group" style="overflow-y: auto; flex-grow: 1;">
-            {% for jo in job_orders %}
-            <input type="radio" name="job_order" id="e-jo-{{ jo.id }}" value="{{ jo.id }}" class="radio-btn" required>
-            <label for="e-jo-{{ jo.id }}" class="radio-label jo-label">
-                <span class="jo-customer">{{ jo.customer }}</span>
-                <span class="jo-details">JO: {{ jo.jo_number }} | Target: {{ jo.order_quantity_kg }} KG</span>
-            </label>
-            {% endfor %}
+        
+        <div style="margin-bottom: 15px; position: relative;">
+            <input type="search" name="q" placeholder="🔍 Search JO or Customer..." 
+                   hx-get="/search-jobs/" 
+                   hx-trigger="keyup changed delay:400ms, search" 
+                   hx-target="#job-list-results"
+                   style="width: 100%; padding: 12px 12px 12px 35px; font-size: 1.1rem; border: 2px solid #cbd5e1; border-radius: 6px; box-sizing: border-box;">
+        </div>
+
+        <div id="job-list-results" class="radio-group" style="overflow-y: auto; flex-grow: 1; max-height: 500px; padding-right: 10px;">
+            {% include 'production/partials/job_radio_list.html' %}
         </div>
     </div>
 
     <div class="panel">
-        <div class="panel-title">3. Enter Weight</div>
+        <div class="panel-title">3. Production Details</div>
+        
+        <div id="digital-spec-container">
+            <div style="padding: 15px; border: 2px dashed #cbd5e1; text-align: center; color: #64748b; border-radius: 8px; margin-bottom: 20px; font-weight: bold;">
+                Select a Job Order to view production instructions.
+            </div>
+        </div>
+
         <div class="input-group">
             <label>Roll Weight (KG)</label>
             <input type="number" step="0.01" min="0.01" max="500" name="roll_weight" required placeholder="0.00">

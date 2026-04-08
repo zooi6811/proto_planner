@@ -2,6 +2,7 @@ from django.shortcuts import render, get_object_or_404
 from django.http import HttpResponse
 from .models import JobOrder, ExtrusionLog, CuttingLog, PackingLog, RawMaterial
 from django.db.models import F
+from django.db.models import Q
 
 def operator_dashboard(request):
     job_orders = JobOrder.objects.all()
@@ -117,19 +118,40 @@ def submit_packing(request):
         return render(request, 'production/partials/progress_bar.html', {'jo': job_order})
     
 # -----------------------------------------------------------------------------
-# HTMX FORM FETCHING (TAB NAVIGATION)
+# HTMX FORM FETCHING & SEARCHING
 # -----------------------------------------------------------------------------
 def get_extrusion_form(request):
-    job_orders = JobOrder.objects.all()
+    # Queue: Only show jobs that have not met their estimated material target, limit to 20
+    job_orders = JobOrder.objects.filter(total_extruded_kg__lt=F('order_quantity_kg')).order_by('-id')[:20]
     return render(request, 'production/partials/extrusion_form.html', {'job_orders': job_orders})
 
 def get_cutting_form(request):
-    job_orders = JobOrder.objects.all()
+    # Queue: Only show jobs that have been extruded but not fully cut
+    job_orders = JobOrder.objects.filter(total_extruded_kg__gt=0).order_by('-id')[:20]
     return render(request, 'production/partials/cutting_form.html', {'job_orders': job_orders})
 
 def get_packing_form(request):
-    job_orders = JobOrder.objects.all()
+    # Queue: Only show jobs that have been cut (or extruded) and need packing
+    job_orders = JobOrder.objects.filter(total_extruded_kg__gt=0).order_by('-id')[:20]
     return render(request, 'production/partials/packing_form.html', {'job_orders': job_orders})
+
+def search_jobs(request):
+    """
+    Live HTMX endpoint that filters jobs as the operator types.
+    """
+    query = request.GET.get('q', '')
+    
+    # Start with all active jobs
+    jobs = JobOrder.objects.filter(order_quantity_kg__gt=0)
+    
+    if query:
+        # Search BOTH the JO Number and the Customer Name, ignoring case
+        jobs = jobs.filter(
+            Q(jo_number__icontains=query) | Q(customer__icontains=query)
+        )
+        
+    # Return just the HTML snippet of the filtered radio buttons, limited to 20 results
+    return render(request, 'production/partials/job_radio_list.html', {'job_orders': jobs[:20]})
 
 # -----------------------------------------------------------------------------
 # CENTRAL ADMIN DASHBOARD (CONTROL TOWER)
@@ -161,3 +183,7 @@ def control_tower(request):
         
     # If it's a full page load, return the full shell
     return render(request, 'production/control_tower.html', context)
+
+def get_job_specs(request, jo_id):
+    job_order = get_object_or_404(JobOrder, id=jo_id)
+    return render(request, 'production/partials/job_spec_card.html', {'jo': job_order})

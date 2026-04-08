@@ -1,0 +1,16 @@
+{% if not job_orders %}
+    <div style="padding: 20px; text-align: center; color: #94a3b8; font-weight: bold;">
+        No active job orders match your search.
+    </div>
+{% endif %}
+
+{% for jo in job_orders %}
+<input type="radio" name="job_order" id="jo-{{ jo.id }}" value="{{ jo.id }}" class="radio-btn" required
+       hx-get="/get-job-specs/{{ jo.id }}/" 
+       hx-target="#digital-spec-container" 
+       hx-swap="innerHTML">
+<label for="jo-{{ jo.id }}" class="radio-label jo-label">
+    <span class="jo-customer">{{ jo.customer }}</span>
+    <span class="jo-details">JO: {{ jo.jo_number }} | Target: {{ jo.order_quantity_kg }} KG</span>
+</label>
+{% endfor %}
