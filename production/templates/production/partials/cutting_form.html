@@ -1,0 +1,47 @@
+<form hx-post="/submit-cutting/" hx-target="#feedback-container" hx-swap="innerHTML" class="dashboard-grid">
+    {% csrf_token %}
+    <div class="panel" style="border-top: 4px solid #9b59b6;">
+        <div class="panel-title" style="color: #9b59b6;">1. Cutting Setup</div>
+        <label class="input-label">Select Machine</label>
+        <div class="radio-group">
+            <input type="radio" name="machine" id="m-c6" value="C6" class="radio-btn" required>
+            <label for="m-c6" class="radio-label">Machine C6</label>
+            <input type="radio" name="machine" id="m-c7" value="C7" class="radio-btn">
+            <label for="m-c7" class="radio-label">Machine C7</label>
+        </div>
+        <label class="input-label">Select Shift</label>
+        <div class="radio-group">
+            <input type="radio" name="shift" id="c-s-am" value="AM" class="radio-btn" required>
+            <label for="c-s-am" class="radio-label">AM Shift</label>
+            <input type="radio" name="shift" id="c-s-pm" value="PM" class="radio-btn">
+            <label for="c-s-pm" class="radio-label">PM Shift</label>
+        </div>
+    </div>
+
+    <div class="panel">
+        <div class="panel-title" style="color: #9b59b6;">2. Active Job Order</div>
+        <div class="radio-group" style="overflow-y: auto; flex-grow: 1;">
+            {% for jo in job_orders %}
+            <input type="radio" name="job_order" id="c-jo-{{ jo.id }}" value="{{ jo.id }}" class="radio-btn" required>
+            <label for="c-jo-{{ jo.id }}" class="radio-label jo-label">
+                <span class="jo-customer">{{ jo.customer }}</span>
+                <span class="jo-details">JO: {{ jo.jo_number }} | Target: {{ jo.order_quantity_kg }} KG</span>
+            </label>
+            {% endfor %}
+        </div>
+    </div>
+
+    <div class="panel">
+        <div class="panel-title" style="color: #9b59b6;">3. Enter Output</div>
+        <div class="input-group">
+            <label>Output Processed (KG)</label>
+            <input type="number" step="0.01" min="0.01" max="1000" name="output_kg" required placeholder="0.00">
+        </div>
+        <div class="input-group">
+            <label>Cutting Wastage (KG)</label>
+            <input type="number" step="0.01" min="0" name="wastage" value="0" placeholder="0.00">
+        </div>
+        <div id="feedback-container">Awaiting input...</div>
+        <button type="submit" class="btn-submit" style="background-color: #9b59b6;">Submit Cutting Log</button>
+    </div>
+</form>

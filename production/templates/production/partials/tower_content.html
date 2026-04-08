@@ -1,0 +1,66 @@
+{% if low_stock_materials %}
+<div class="panel" style="border-left: 5px solid #ef4444; background-color: #fef2f2; margin-bottom: 20px;">
+    <h3 style="color: #b91c1c; margin-top: 0;">⚠️ Critical Inventory Alerts</h3>
+    <ul style="color: #7f1d1d; font-weight: bold; padding-left: 20px;">
+        {% for material in low_stock_materials %}
+            <li>{{ material.name }} ({{ material.material_id }}) is at {{ material.current_stock_kg }} KG! Reorder point: {{ material.reorder_point_kg }} KG.</li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+<div class="dashboard-grid" style="grid-template-columns: 2fr 1fr;">
+    
+    <div class="panel">
+        <h3 class="panel-title">Live Job Orders</h3>
+        <table style="width: 100%; border-collapse: collapse; text-align: left;">
+            <thead>
+                <tr style="border-bottom: 2px solid #cbd5e1; color: #64748b;">
+                    <th style="padding: 10px 0;">JO Number</th>
+                    <th>Customer</th>
+                    <th>Extrusion Progress</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for jo in active_jobs %}
+                <tr style="border-bottom: 1px solid #e2e8f0;">
+                    <td style="padding: 15px 0; font-weight: bold;">{{ jo.jo_number }}</td>
+                    <td>{{ jo.customer }}</td>
+                    <td style="width: 50%;">
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <div style="flex-grow: 1; background-color: #e2e8f0; height: 10px; border-radius: 5px; overflow: hidden;">
+                                <div style="width: {{ jo.extrusion_progress|stringformat:'.1f' }}%; max-width: 100%; background-color: #0284c7; height: 10px;"></div>
+                            </div>
+                            <span style="font-size: 0.9rem; font-weight: bold;">{{ jo.extrusion_progress }}%</span>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="panel">
+        <h3 class="panel-title">Recent Floor Activity</h3>
+        
+        <h4 style="color: #e67e22; border-bottom: 1px solid #eee; padding-bottom: 5px;">Extrusion</h3>
+        <ul style="list-style: none; padding: 0; margin: 0; font-size: 0.95rem;">
+            {% for log in recent_extrusion %}
+            <li style="padding: 8px 0; border-bottom: 1px dashed #e2e8f0;">
+                <strong>Machine {{ log.machine_no }}:</strong> Produced {{ log.roll_weight_kg }} KG for {{ log.job_order.jo_number }}
+                <br><span style="color: #94a3b8; font-size: 0.8rem;">{{ log.timestamp|timesince }} ago</span>
+            </li>
+            {% endfor %}
+        </ul>
+
+        <h4 style="color: #9b59b6; border-bottom: 1px solid #eee; padding-bottom: 5px; margin-top: 20px;">Cutting</h3>
+        <ul style="list-style: none; padding: 0; margin: 0; font-size: 0.95rem;">
+            {% for log in recent_cutting %}
+            <li style="padding: 8px 0; border-bottom: 1px dashed #e2e8f0;">
+                <strong>Machine {{ log.machine_no }}:</strong> Cut {{ log.output_kg }} KG for {{ log.job_order.jo_number }}
+                <br><span style="color: #94a3b8; font-size: 0.8rem;">{{ log.timestamp|timesince }} ago</span>
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+</div>

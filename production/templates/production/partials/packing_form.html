@@ -1,0 +1,29 @@
+<form hx-post="/submit-packing/" hx-target="#feedback-container" hx-swap="innerHTML" class="dashboard-grid" style="grid-template-columns: 1fr 1fr;">
+    {% csrf_token %}
+    <div class="panel" style="border-top: 4px solid #2ecc71;">
+        <div class="panel-title" style="color: #2ecc71;">1. Select Finished Job Order</div>
+        <div class="radio-group" style="overflow-y: auto; flex-grow: 1; max-height: 500px;">
+            {% for jo in job_orders %}
+            <input type="radio" name="job_order" id="p-jo-{{ jo.id }}" value="{{ jo.id }}" class="radio-btn" required>
+            <label for="p-jo-{{ jo.id }}" class="radio-label jo-label">
+                <span class="jo-customer">{{ jo.customer }}</span>
+                <span class="jo-details">JO: {{ jo.jo_number }} | Target: {{ jo.order_quantity_kg }} KG</span>
+            </label>
+            {% endfor %}
+        </div>
+    </div>
+
+    <div class="panel" style="border-top: 4px solid #2ecc71;">
+        <div class="panel-title" style="color: #2ecc71;">2. Enter Packing Details</div>
+        <div class="input-group">
+            <label>Packing Size (KG per Bag/Pallet)</label>
+            <input type="number" step="0.01" min="0.01" name="packing_size" required placeholder="0.00">
+        </div>
+        <div class="input-group">
+            <label>Quantity Packed (No. of Bags/Pallets)</label>
+            <input type="number" min="1" name="quantity" required placeholder="0">
+        </div>
+        <div id="feedback-container">Awaiting input...</div>
+        <button type="submit" class="btn-submit" style="background-color: #2ecc71;">Submit Packing Log</button>
+    </div>
+</form>

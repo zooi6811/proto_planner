@@ -1,0 +1,47 @@
+<form hx-post="/submit-extrusion/" hx-target="#feedback-container" hx-swap="innerHTML" class="dashboard-grid">
+    {% csrf_token %}
+    <div class="panel">
+        <div class="panel-title">1. Extrusion Setup</div>
+        <label class="input-label">Select Machine</label>
+        <div class="radio-group">
+            <input type="radio" name="machine" id="m-b1" value="B1" class="radio-btn" required>
+            <label for="m-b1" class="radio-label">Machine B1</label>
+            <input type="radio" name="machine" id="m-b6" value="B6" class="radio-btn">
+            <label for="m-b6" class="radio-label">Machine B6</label>
+        </div>
+        <label class="input-label">Select Shift</label>
+        <div class="radio-group">
+            <input type="radio" name="shift" id="s-am" value="AM" class="radio-btn" required>
+            <label for="s-am" class="radio-label">AM Shift</label>
+            <input type="radio" name="shift" id="s-pm" value="PM" class="radio-btn">
+            <label for="s-pm" class="radio-label">PM Shift</label>
+        </div>
+    </div>
+
+    <div class="panel">
+        <div class="panel-title">2. Active Job Order</div>
+        <div class="radio-group" style="overflow-y: auto; flex-grow: 1;">
+            {% for jo in job_orders %}
+            <input type="radio" name="job_order" id="e-jo-{{ jo.id }}" value="{{ jo.id }}" class="radio-btn" required>
+            <label for="e-jo-{{ jo.id }}" class="radio-label jo-label">
+                <span class="jo-customer">{{ jo.customer }}</span>
+                <span class="jo-details">JO: {{ jo.jo_number }} | Target: {{ jo.order_quantity_kg }} KG</span>
+            </label>
+            {% endfor %}
+        </div>
+    </div>
+
+    <div class="panel">
+        <div class="panel-title">3. Enter Weight</div>
+        <div class="input-group">
+            <label>Roll Weight (KG)</label>
+            <input type="number" step="0.01" min="0.01" max="500" name="roll_weight" required placeholder="0.00">
+        </div>
+        <div class="input-group">
+            <label>Wastage (KG)</label>
+            <input type="number" step="0.01" min="0" name="wastage" value="0" placeholder="0.00">
+        </div>
+        <div id="feedback-container">Awaiting input...</div>
+        <button type="submit" class="btn-submit">Submit Extrusion Log</button>
+    </div>
+</form>
