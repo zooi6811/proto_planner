@@ -6,7 +6,8 @@ from .models import (
     JobOrder, 
     ExtrusionLog, 
     CuttingLog, 
-    PackingLog
+    PackingLog,
+    MaterialAllocation
 )
 
 # Registering the models allows the Admin to view, add, edit, and delete records
@@ -17,3 +18,4 @@ admin.site.register(JobOrder)
 admin.site.register(ExtrusionLog)
 admin.site.register(CuttingLog)
 admin.site.register(PackingLog)
+admin.site.register(MaterialAllocation)

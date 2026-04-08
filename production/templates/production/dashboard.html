@@ -25,7 +25,15 @@
         .panel-title { font-size: 1.2rem; font-weight: bold; margin-bottom: 20px; color: var(--text-main); text-transform: uppercase; }
         .input-label { font-weight: 600; color: var(--text-muted); margin-bottom: 8px; display: block; }
         .radio-group { display: flex; flex-direction: column; gap: 10px; margin-bottom: 25px; }
-        .radio-btn { display: none; }
+        /* Visually hide the radio buttons without breaking HTML5 validation */
+        .radio-btn { 
+            position: absolute; 
+            opacity: 0; 
+            width: 1px; 
+            height: 1px; 
+            overflow: hidden; 
+            pointer-events: none;
+        }
         .radio-label { display: flex; flex-direction: column; padding: 15px 20px; background-color: var(--bg-color); border: 2px solid var(--border-color); border-radius: 6px; font-size: 1.1rem; font-weight: 600; cursor: pointer; transition: 0.2s; }
         .radio-btn:checked + .radio-label { background-color: #e0f2fe; border-color: var(--accent-blue); color: var(--accent-blue); }
         .jo-customer { font-size: 1.3rem; font-weight: bold; color: var(--text-main); }

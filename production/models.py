@@ -30,12 +30,76 @@ class RecipeItem(models.Model):
 
     def __str__(self):
         return f"{self.recipe.formula_code} -> {self.material.name} ({self.ratio * 100}%)"
+    
+# -----------------------------------------------------------------------------
+# MATERIAL ALLOCATION & ISSUANCE
+# -----------------------------------------------------------------------------
+class MaterialAllocation(models.Model):
+    job_order = models.ForeignKey('JobOrder', on_delete=models.CASCADE, related_name='allocations')
+    material = models.ForeignKey(RawMaterial, on_delete=models.CASCADE)
+    
+    required_kg = models.DecimalField(max_digits=10, decimal_places=2)
+    allocated_kg = models.DecimalField(max_digits=10, decimal_places=2, help_text="Physical stock reserved for this job")
+    shortfall_kg = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text="Hypothetical stock (Needs Purchasing)")
+    
+    actual_used_kg = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+
+    @property
+    def is_overused(self):
+        # Warn if actual usage exceeds the required amount + a 2% leeway
+        return float(self.actual_used_kg) > (float(self.required_kg) * 1.02)
+
+    def __str__(self):
+        return f"{self.job_order.jo_number} - {self.material.name} (Shortfall: {self.shortfall_kg} KG)"
+    
+class MaterialUsageLog(models.Model):
+    job_order = models.ForeignKey('JobOrder', on_delete=models.CASCADE, related_name='usage_logs')
+    material = models.ForeignKey(RawMaterial, on_delete=models.CASCADE)
+    amount_kg = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0.01)])
+    timestamp = models.DateTimeField(auto_now_add=True)
+    operator_name = models.CharField(max_length=50)
+    
+    # Flags if this was an off-recipe substitution
+    is_substitution = models.BooleanField(default=False) 
+
+    def save(self, *args, **kwargs):
+        is_new = self.pk is None
+        super().save(*args, **kwargs)
+
+        if is_new:
+            with transaction.atomic():
+                # 1. Fetch or create the allocation record
+                allocation, created = MaterialAllocation.objects.get_or_create(
+                    job_order=self.job_order,
+                    material=self.material,
+                    defaults={
+                        'required_kg': 0, 'allocated_kg': 0, 'shortfall_kg': 0, 'actual_used_kg': 0
+                    }
+                )
+
+                # 2. Identify if this is an Ad-Hoc Substitution
+                if created or allocation.required_kg == 0:
+                    self.is_substitution = True
+                    super().save(update_fields=['is_substitution']) # Update the flag silently
+                    
+                    # Because it wasn't pre-allocated, we MUST deduct it from live warehouse stock now
+                    live_material = RawMaterial.objects.select_for_update().get(pk=self.material.pk)
+                    live_material.current_stock_kg -= Decimal(str(self.amount_kg))
+                    live_material.save()
+                    
+                    if live_material.current_stock_kg <= live_material.reorder_point_kg:
+                        print(f"⚠️ ADMIN ALERT: {live_material.name} stock has dropped due to an unexpected substitution!")
+
+                # 3. Log the actual usage against the Job Order
+                allocation.actual_used_kg = float(allocation.actual_used_kg) + float(self.amount_kg)
+                allocation.save()
 
 # -----------------------------------------------------------------------------
 # JOB ORDER MANAGEMENT
 # -----------------------------------------------------------------------------
 
 class JobOrder(models.Model):
+    
     jo_number = models.CharField(max_length=20, unique=True)
     customer = models.CharField(max_length=100)
     
@@ -59,12 +123,51 @@ class JobOrder(models.Model):
     total_extruded_kg = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     total_cut_kg = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     total_packed_kg = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    
+    is_completed = models.BooleanField(default=False, help_text="Mark as true when the entire order is finished.")
 
     def save(self, *args, **kwargs):
+        is_new = self.pk is None
+        
+        # 1. Calculate Estimated Total Material Required
         if self.order_quantity_kg:
-            buffer_multiplier = 1 + (self.wastage_buffer_percent / 100)
+            buffer_multiplier = 1 + (float(self.wastage_buffer_percent) / 100)
             self.total_est_material_kg = float(self.order_quantity_kg) * float(buffer_multiplier)
+            
         super().save(*args, **kwargs)
+        
+        # 2. Upfront Material Allocation (Only runs when a JO is first created)
+        if is_new and self.recipe:
+            with transaction.atomic():
+                for recipe_item in self.recipe.ingredients.all():
+                    # Lock the material row to prevent concurrent booking conflicts
+                    material = RawMaterial.objects.select_for_update().get(pk=recipe_item.material.pk)
+                    
+                    # Calculate exact KG needed for this specific ingredient
+                    required_amount = Decimal(str(self.total_est_material_kg * float(recipe_item.ratio)))
+                    
+                    allocated_amount = Decimal('0.00')
+                    shortfall_amount = Decimal('0.00')
+
+                    # Check against physical warehouse stock
+                    if material.current_stock_kg >= required_amount:
+                        allocated_amount = required_amount
+                        material.current_stock_kg -= required_amount
+                    else:
+                        allocated_amount = material.current_stock_kg
+                        shortfall_amount = required_amount - material.current_stock_kg
+                        material.current_stock_kg = Decimal('0.00') # Drain remaining stock
+                    
+                    material.save()
+
+                    # Generate the Digital Allocation Ticket
+                    MaterialAllocation.objects.create(
+                        job_order=self,
+                        material=material,
+                        required_kg=required_amount,
+                        allocated_kg=allocated_amount,
+                        shortfall_kg=shortfall_amount
+                    )
         
     @property
     def extrusion_progress(self):
@@ -74,6 +177,31 @@ class JobOrder(models.Model):
 
     def __str__(self):
         return f"JO: {self.jo_number} - {self.customer}"
+    
+    def complete_job(self):
+        """
+        To be called by the Admin when closing a job. 
+        Refunds any allocated material that was NOT actually used.
+        """
+        if self.is_completed:
+            return # Prevent double-refunding
+            
+        with transaction.atomic():
+            for allocation in self.allocations.all():
+                unused_kg = float(allocation.allocated_kg) - float(allocation.actual_used_kg)
+                
+                # If they used less than allocated (e.g., due to a substitution), refund the rest
+                if unused_kg > 0:
+                    material = RawMaterial.objects.select_for_update().get(pk=allocation.material.pk)
+                    material.current_stock_kg += Decimal(str(unused_kg))
+                    material.save()
+                    
+                    # Zero out the remaining allocation so the ledger balances
+                    allocation.allocated_kg = allocation.actual_used_kg
+                    allocation.save()
+            
+            self.is_completed = True
+            self.save(update_fields=['is_completed'])
 
 # -----------------------------------------------------------------------------
 # FLOOR PRODUCTION LOGS
@@ -94,20 +222,11 @@ class ExtrusionLog(models.Model):
         super().save(*args, **kwargs)
 
         if is_new:
+            # Only update the Job Order's progress. 
+            # (Material deductions are now handled by MaterialAllocation & MaterialUsageLogs)
             JobOrder.objects.filter(pk=self.job_order.pk).update(
                 total_extruded_kg=F('total_extruded_kg') + self.roll_weight_kg
             )
-            job_order = self.job_order
-            if job_order.recipe:
-                total_usage_kg = float(self.roll_weight_kg) + float(self.wastage_kg)
-                with transaction.atomic():
-                    for recipe_item in job_order.recipe.ingredients.all():
-                        material = recipe_item.material
-                        deduction_amount = total_usage_kg * float(recipe_item.ratio)
-                        material.current_stock_kg -= Decimal(str(deduction_amount))
-                        material.save()
-                        if material.current_stock_kg <= material.reorder_point_kg:
-                            print(f"⚠️ ADMIN ALERT: {material.name} stock has dropped to {material.current_stock_kg}kg!")
 
 class CuttingLog(models.Model):
     job_order = models.ForeignKey(JobOrder, on_delete=models.CASCADE, related_name='cutting_logs')

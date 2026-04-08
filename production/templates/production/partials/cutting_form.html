@@ -24,9 +24,10 @@
         
         <div style="margin-bottom: 15px; position: relative;">
             <input type="search" name="q" placeholder="🔍 Search JO or Customer..." 
-                   hx-get="/search-jobs/" 
+                   hx-get="/search-jobs/?dept=cutting" 
                    hx-trigger="keyup changed delay:400ms, search" 
                    hx-target="#job-list-results"
+                   onkeydown="if(event.key === 'Enter') { event.preventDefault(); return false; }"
                    style="width: 100%; padding: 12px 12px 12px 35px; font-size: 1.1rem; border: 2px solid #cbd5e1; border-radius: 6px; box-sizing: border-box;">
         </div>
 
