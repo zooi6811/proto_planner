@@ -16,8 +16,9 @@
     {% for jo in job_orders %}
     <div>
         <input type="radio" name="job_order" value="{{ jo.id }}" id="jo_{{ jo.id }}" class="radio-btn" required
-       hx-get="/get-job-specs/{{ jo.id }}/?dept={{ dept }}" 
-       hx-target="#job-specs-container">
+               hx-get="/get-job-specs/{{ jo.id }}/?dept={{ dept }}" 
+               hx-target="#job-specs-container"
+               hx-trigger="change">
         
         <label for="jo_{{ jo.id }}" class="radio-label">
             <div style="font-weight: bold; font-size: 1.1rem; color: var(--text-primary);">{{ jo.jo_number }}</div>

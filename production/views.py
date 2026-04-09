@@ -14,16 +14,27 @@ def submit_material_usage(request):
         jo_id = request.POST.get('job_order')
         material_id = request.POST.get('material_id')
         
+        if not jo_id or not material_id:
+            return HttpResponse("<div style='padding: 15px; background: #dc3545; color: white; border-radius: 4px; font-weight: bold; text-align: center;'>Error: Please select both a Job Order and a Material.</div>")
+
         try:
             amount_kg = float(request.POST.get('amount_kg'))
         except ValueError:
-            return render(request, 'production/partials/error_message.html', {'error': "Invalid amount."})
+            return HttpResponse("<div style='padding: 15px; background: #dc3545; color: white; border-radius: 4px; font-weight: bold; text-align: center;'>Error: Invalid amount. Please enter numbers only.</div>")
 
         if amount_kg <= 0:
-            return render(request, 'production/partials/error_message.html', {'error': "Amount must be greater than zero."})
+            return HttpResponse("<div style='padding: 15px; background: #dc3545; color: white; border-radius: 4px; font-weight: bold; text-align: center;'>Error: Amount must be greater than zero.</div>")
 
-        job_order = get_object_or_404(JobOrder, id=jo_id)
         material = get_object_or_404(RawMaterial, id=material_id)
+        job_order = get_object_or_404(JobOrder, id=jo_id)
+
+        # Ensure the job is actually active
+        if job_order.is_completed: # (Or if job_order.status == 'CANCELLED', depending on your model)
+            return HttpResponse("<div style='padding: 15px; background: #dc3545; color: white; border-radius: 4px; font-weight: bold; text-align: center;'>Error: This Job Order is already closed or completed. You cannot log new data against it.</div>")
+
+        # NEW CHECK: Prevent pulling phantom stock from the warehouse
+        if amount_kg > float(material.current_stock_kg):
+            return HttpResponse(f"<div style='padding: 15px; background: #dc3545; color: white; border-radius: 4px; font-weight: bold; text-align: center;'>Error: Insufficient stock. You requested {amount_kg}kg, but only {material.current_stock_kg}kg of {material.name} is available.</div>")
 
         usage_log = MaterialUsageLog.objects.create(
             job_order=job_order,
@@ -32,13 +43,17 @@ def submit_material_usage(request):
             operator_name="Extrusion Op"
         )
         
-        # Check for overuse warning
+        # Deduct the stock globally (assuming you want immediate inventory deduction here)
+        material.current_stock_kg -= Decimal(str(amount_kg))
+        material.save()
+        
+        # Check for overuse warning against the job's theoretical allocation
         allocation = MaterialAllocation.objects.filter(job_order=job_order, material=material).first()
         if allocation and allocation.is_overused:
-            warning_msg = f"⚠️ WARNING: You have exceeded the allocated limit for {material.name}!"
-            return render(request, 'production/partials/error_message.html', {'error': warning_msg})
+            warning_msg = f"⚠️ WARNING: Material logged successfully, but you have now exceeded the allocated formula limit for {material.name}!"
+            return HttpResponse(f"<div style='padding: 15px; background: #ffc107; color: #333; border-radius: 4px; font-weight: bold; text-align: center;'>{warning_msg}</div>")
             
-        return HttpResponse(f"<div style='color: green; font-weight: bold;'>Successfully logged {amount_kg} KG of {material.name}.</div>")
+        return HttpResponse(f"<div style='padding: 15px; background: #28a745; color: white; border-radius: 4px; font-weight: bold; text-align: center;'>Successfully logged {amount_kg}kg of {material.name}.</div>")
 
 def operator_dashboard(request):
     job_orders = JobOrder.objects.all()
@@ -82,6 +97,10 @@ def start_extrusion_session(request):
         target_amount = float(request.POST.get('target_amount'))
         
         job_order = get_object_or_404(JobOrder, id=jo_id)
+
+        # Ensure the job is actually active
+        if job_order.is_completed: # (Or if job_order.status == 'CANCELLED', depending on your model)
+            return HttpResponse("<div style='padding: 15px; background: #dc3545; color: white; border-radius: 4px; font-weight: bold; text-align: center;'>Error: This Job Order is already closed or completed. You cannot log new data against it.</div>")
         
         with transaction.atomic():
             # Create the Active Session
@@ -109,20 +128,43 @@ def log_session_roll(request):
     """Operator logs a roll to their currently active session."""
     if request.method == "POST":
         session_id = request.POST.get('session_id')
+
+        if not session_id:
+            return HttpResponse("<div style='padding: 15px; background: #dc3545; color: white; border-radius: 4px; font-weight: bold; text-align: center;'>Error: No active session found.</div>")
+            
         session = get_object_or_404(ExtrusionSession, id=session_id)
+
+        if session.status != 'ACTIVE':
+            return HttpResponse("<div style='padding: 15px; background: #dc3545; color: white; border-radius: 4px; font-weight: bold; text-align: center;'>Error: This machine session is no longer active. Please refresh your dashboard.</div>")
         
         try:
             roll_weight = float(request.POST.get('roll_weight'))
             wastage = float(request.POST.get('wastage') or 0)
         except ValueError:
-            return HttpResponse("<div class='error'>Invalid numbers.</div>")
+            return HttpResponse("<div style='padding: 15px; background: #dc3545; color: white; border-radius: 4px; font-weight: bold; text-align: center;'>Error: Invalid input. Ensure weights are numeric.</div>")
 
+        # 1. Base Logic Checks
+        if roll_weight <= 0:
+            return HttpResponse("<div style='padding: 15px; background: #dc3545; color: white; border-radius: 4px; font-weight: bold; text-align: center;'>Error: Roll weight must be strictly greater than zero.</div>")
+        
+        # 2. Physical Machine Limits (Adjust 500 to match your actual factory winder limits)
+        if roll_weight > 500: 
+            return HttpResponse(f"<div style='padding: 15px; background: #dc3545; color: white; border-radius: 4px; font-weight: bold; text-align: center;'>Error: {roll_weight}kg exceeds maximum physical roll capacity. Check for typos.</div>")
+            
+        # 3. Wastage Logic
+        if wastage < 0 or wastage > roll_weight:
+            return HttpResponse("<div style='padding: 15px; background: #dc3545; color: white; border-radius: 4px; font-weight: bold; text-align: center;'>Error: Wastage cannot be negative or greater than the total roll weight itself.</div>")
+
+        # Save the log
         ExtrusionLog.objects.create(session=session, roll_weight_kg=roll_weight, wastage_kg=wastage)
         
-        session.refresh_from_db() # Refresh to see if auto-stop triggered
+        # Check if the target was reached to trigger auto-completion
+        session.refresh_from_db() 
         if session.status == 'COMPLETED':
-            return HttpResponse("<div class='success'>Target Reached! Session Auto-Completed.</div>")
+            # Return a special completion message, calling load_machine_state to reset the UI
+            return HttpResponse("<div style='padding: 15px; background: #28a745; color: white; border-radius: 4px; font-weight: bold; text-align: center; margin-bottom: 15px;'>Target Reached! Session Auto-Completed.</div>" + load_machine_state(request, session.machine_no).content.decode('utf-8'))
             
+        # Standard successful reload of the active session UI
         return load_machine_state(request, session.machine_no)
 
 def stop_extrusion_session(request, session_id):
@@ -137,33 +179,50 @@ def stop_extrusion_session(request, session_id):
 def submit_cutting(request):
     if request.method == "POST":
         jo_id = request.POST.get('job_order')
+        
+        # 1. Did they actually select a job from the list?
+        if not jo_id:
+            return HttpResponse("<div style='padding: 15px; background: #dc3545; color: white; border-radius: 4px; font-weight: bold; text-align: center;'>Error: Please select an active job from the list first.</div>")
+
+        # 2. Are the inputs valid numbers?
         try:
             output_kg = float(request.POST.get('output_kg'))
             wastage = float(request.POST.get('wastage') or 0)
         except ValueError:
-            return render(request, 'production/partials/error_message.html', {'error': "Invalid input. Please enter numbers only."})
+            return HttpResponse("<div style='padding: 15px; background: #dc3545; color: white; border-radius: 4px; font-weight: bold; text-align: center;'>Error: Invalid input. Please enter numbers only.</div>")
 
+        # 3. Are the numbers positive?
         if output_kg <= 0 or wastage < 0:
-            return render(request, 'production/partials/error_message.html', {'error': "Weights cannot be zero or negative."})
-        if output_kg > 1000: 
-            return render(request, 'production/partials/error_message.html', {'error': f"An output of {output_kg}kg seems too high for a single entry."})
+            return HttpResponse("<div style='padding: 15px; background: #dc3545; color: white; border-radius: 4px; font-weight: bold; text-align: center;'>Error: Weights cannot be zero or negative.</div>")
+            
+        # 4. Is the output absurdly high for a single shift?
+        if output_kg > 2000: 
+            return HttpResponse(f"<div style='padding: 15px; background: #dc3545; color: white; border-radius: 4px; font-weight: bold; text-align: center;'>Error: {output_kg}kg exceeds the maximum allowed limit for a single entry. Check for typos.</div>")
 
         job_order = get_object_or_404(JobOrder, id=jo_id)
-        
-        # BUG FIX 1: Safely cast Decimals to floats to prevent Python TypeErrors during multiplication
-        if (float(job_order.total_cut_kg) + output_kg) > (float(job_order.total_extruded_kg) * 1.05):
-            return render(request, 'production/partials/error_message.html', {'error': "Cannot cut more material than the Extrusion department has produced!"})
 
+        # Ensure the job is actually active
+        if job_order.is_completed: # (Or if job_order.status == 'CANCELLED', depending on your model)
+            return HttpResponse("<div style='padding: 15px; background: #dc3545; color: white; border-radius: 4px; font-weight: bold; text-align: center;'>Error: This Job Order is already closed or completed. You cannot log new data against it.</div>")
+        
+        # 5. The Ultimate Gatekeeper: Can they physically cut this much?
+        remaining_to_cut = float(job_order.total_extruded_kg) - float(job_order.total_cut_kg)
+        
+        if output_kg > (remaining_to_cut * 1.05): # 5% margin for scale discrepancies
+            return HttpResponse(f"<div style='padding: 15px; background: #dc3545; color: white; border-radius: 4px; font-weight: bold; text-align: center;'>Error: Cannot log {output_kg}kg. Only {remaining_to_cut:.1f}kg remains from Extrusion.</div>")
+
+        # 6. If it passes all checks, log it to the database
         CuttingLog.objects.create(
             job_order=job_order,
             machine_no=request.POST.get('machine'),
             shift=request.POST.get('shift'),
             output_kg=output_kg,
             wastage_kg=wastage,
-            operator_name="Cutting Op"
+            operator_name="Cutting Op" # Update this later if you implement user accounts
         )
         job_order.refresh_from_db()
         
+        # Return the success file which updates the text and the progress bar
         return render(request, 'production/partials/cutting_success.html', {'jo': job_order})
 
 # -----------------------------------------------------------------------------
@@ -172,23 +231,36 @@ def submit_cutting(request):
 def submit_packing(request):
     if request.method == "POST":
         jo_id = request.POST.get('job_order')
+        
+        # 1. Did they actually select a job?
+        if not jo_id:
+            return HttpResponse("<div style='padding: 15px; background: #dc3545; color: white; border-radius: 4px; font-weight: bold; text-align: center;'>Error: Please select a job from the list first.</div>")
+
+        # 2. Are the inputs valid numbers?
         try:
             packing_size = float(request.POST.get('packing_size'))
             quantity = int(request.POST.get('quantity'))
         except ValueError:
-            return render(request, 'production/partials/error_message.html', {'error': "Invalid input. Ensure quantity is a whole number."})
+            return HttpResponse("<div style='padding: 15px; background: #dc3545; color: white; border-radius: 4px; font-weight: bold; text-align: center;'>Error: Invalid input. Ensure quantity is a whole number.</div>")
 
+        # 3. Are they logging real amounts?
         if packing_size <= 0 or quantity <= 0:
-            return render(request, 'production/partials/error_message.html', {'error': "Values must be greater than zero."})
+            return HttpResponse("<div style='padding: 15px; background: #dc3545; color: white; border-radius: 4px; font-weight: bold; text-align: center;'>Error: Packing size and quantity must be greater than zero.</div>")
 
         total_weight_submitting = packing_size * quantity
         job_order = get_object_or_404(JobOrder, id=jo_id)
 
-        # BUG FIX 2: Ensure operators cannot pack more than the factory has physically produced
-        available_to_pack = float(job_order.total_cut_kg) if float(job_order.total_cut_kg) > 0 else float(job_order.total_extruded_kg)
-        if (float(job_order.total_packed_kg) + total_weight_submitting) > (available_to_pack * 1.05):
-            return render(request, 'production/partials/error_message.html', {'error': "Cannot pack more material than has been produced/cut!"})
+        # Ensure the job is actually active
+        if job_order.is_completed: # (Or if job_order.status == 'CANCELLED', depending on your model)
+            return HttpResponse("<div style='padding: 15px; background: #dc3545; color: white; border-radius: 4px; font-weight: bold; text-align: center;'>Error: This Job Order is already closed or completed. You cannot log new data against it.</div>")
 
+        # 4. The Ultimate Gatekeeper: Have they cut enough material to pack this much?
+        remaining_to_pack = float(job_order.total_cut_kg) - float(job_order.total_packed_kg)
+
+        if total_weight_submitting > (remaining_to_pack * 1.05): # 5% margin
+            return HttpResponse(f"<div style='padding: 15px; background: #dc3545; color: white; border-radius: 4px; font-weight: bold; text-align: center;'>Error: Attempting to pack {total_weight_submitting:.1f}kg, but only {remaining_to_pack:.1f}kg has been cut and is available.</div>")
+
+        # 5. If it passes all checks, log it to the database
         PackingLog.objects.create(
             job_order=job_order,
             packing_size_kg=packing_size,
@@ -196,7 +268,16 @@ def submit_packing(request):
             operator_name="Packing Op"
         )
         job_order.refresh_from_db()
+
+        # Check if the entire order is now fulfilled
+        if float(job_order.total_packed_kg) >= float(job_order.order_quantity_kg):
+            job_order.is_completed = True
+            job_order.save()
+            
+            # Optional: You could return a different success template here that says "JOB COMPLETE!" 
+            # and removes the form entirely.
         
+        # Return the success file which updates the text and the progress bar
         return render(request, 'production/partials/packing_success.html', {'jo': job_order})
 
 # -----------------------------------------------------------------------------
@@ -257,6 +338,13 @@ def control_tower(request):
 
 def get_job_specs(request, jo_id):
     job_order = get_object_or_404(JobOrder, id=jo_id)
-    # Default to cutting if nothing is passed, just to be safe
-    dept = request.GET.get('dept', 'cutting') 
+
+    if job_order.is_completed: 
+        return HttpResponse("<div style='padding: 15px; background: #dc3545; color: white; border-radius: 4px; font-weight: bold; text-align: center;'>Error: This Job Order is already closed or completed. You cannot log new data against it.</div>")
+        
+    # Safely catch both None and empty strings
+    dept = request.GET.get('dept')
+    if not dept:
+        dept = 'cutting'
+        
     return render(request, 'production/partials/job_spec_card.html', {'jo': job_order, 'dept': dept})

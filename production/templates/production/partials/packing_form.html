@@ -3,7 +3,7 @@
         <h2>Packing & Dispatch Log</h2>
     </div>
     
-    <form hx-post="/submit-packing/" hx-target="#feedback-container">
+    <form hx-post="/submit-packing/" hx-target="#feedback-container" hx-disabled-elt="#packing-submit-btn">
         {% csrf_token %}
         <div style="display: grid; grid-template-columns: 1fr 1.5fr; gap: 30px;">
             
@@ -40,7 +40,7 @@
                     </div>
                 </div>
                 
-                <button type="submit" class="btn btn-primary" style="margin-top: 20px; width: 100%; padding: 12px; font-weight: bold;">SUBMIT PACKING LOG</button>
+                <button id="packing-submit-btn" type="submit" class="btn btn-primary" style="margin-top: 20px; width: 100%; padding: 12px; font-weight: bold;">SUBMIT</button>
                 
                 <div id="feedback-container" style="margin-top: 20px;"></div>
             </div>
