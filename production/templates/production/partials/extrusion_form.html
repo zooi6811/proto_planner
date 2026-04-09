@@ -1,40 +1,18 @@
-<form hx-post="/submit-extrusion/" hx-target="#feedback-container" hx-swap="innerHTML" class="dashboard-grid">
-    {% csrf_token %}
-    
+<div class="dashboard-grid" style="grid-template-columns: 1fr 2.5fr;">
     <div class="panel">
-        <div class="panel-title">1. Extrusion Setup</div>
-        <label class="input-label">Select Machine</label>
+        <div class="panel-title">1. Select Machine</div>
         <div class="radio-group">
-            <input type="radio" name="machine" id="m-b1" value="B1" class="radio-btn" required>
-            <label for="m-b1" class="radio-label">Machine B1</label>
-            <input type="radio" name="machine" id="m-b6" value="B6" class="radio-btn">
-            <label for="m-b6" class="radio-label">Machine B6</label>
-        </div>
-        <label class="input-label">Select Shift</label>
-        <div class="radio-group">
-            <input type="radio" name="shift" id="s-am" value="AM" class="radio-btn" required>
-            <label for="s-am" class="radio-label">AM Shift</label>
-            <input type="radio" name="shift" id="s-pm" value="PM" class="radio-btn">
-            <label for="s-pm" class="radio-label">PM Shift</label>
+            <button class="radio-label" style="width: 100%; border: none; margin-bottom: 10px;" 
+                    hx-get="/load-machine-state/B1/" hx-target="#machine-workspace">Machine B1</button>
+            <button class="radio-label" style="width: 100%; border: none; margin-bottom: 10px;" 
+                    hx-get="/load-machine-state/B6/" hx-target="#machine-workspace">Machine B6</button>
         </div>
     </div>
 
-    <div class="panel">
-        <div class="panel-title">2. Active Job Order</div>
-        
-        <div style="margin-bottom: 15px; position: relative;">
-            <input type="search" name="q" placeholder="🔍 Search JO or Customer..." 
-                   hx-get="/search-jobs/?dept=extrusion" 
-                   hx-trigger="keyup changed delay:400ms, search" 
-                   hx-target="#job-list-results"
-                   onkeydown="if(event.key === 'Enter') { event.preventDefault(); return false; }"
-                   style="width: 100%; padding: 12px 12px 12px 35px; font-size: 1.1rem; border: 2px solid #cbd5e1; border-radius: 6px; box-sizing: border-box;">
-        </div>
-
-        <div id="job-list-results" class="radio-group" style="overflow-y: auto; flex-grow: 1; max-height: 500px; padding-right: 10px;">
-            {% include 'production/partials/job_radio_list.html' %}
-        </div>
+    <div id="machine-workspace" class="panel" style="background-color: #f8fafc; align-items: center; justify-content: center;">
+        <h3 style="color: #94a3b8;">Select a machine to view or start a session.</h3>
     </div>
+</div>
 
     <div class="panel">
         <div class="panel-title">3. Production Details</div>

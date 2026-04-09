@@ -2,7 +2,7 @@ from django.contrib import admin
 from .models import (
     RawMaterial, Recipe, RecipeItem, JobOrder, 
     ExtrusionLog, CuttingLog, PackingLog, 
-    MaterialAllocation, MaterialUsageLog, DispatchLog, ExtrusionSession, SessionMaterial
+    MaterialAllocation, MaterialUsageLog, DispatchLog, ExtrusionSession, SessionMaterial, MaterialRestockLog
 )
 
 # --- INLINES ---
@@ -24,6 +24,11 @@ class DispatchLogInline(admin.TabularInline):
     model = DispatchLog
     extra = 0
 
+class MaterialRestockLogInline(admin.TabularInline):
+    model = MaterialRestockLog
+    extra = 1 # Shows one blank row ready for input
+    readonly_fields = ('arrival_date',)
+
 # --- ADMIN CLASSES ---
 class RecipeAdmin(admin.ModelAdmin):
     inlines = [RecipeItemInline]
@@ -36,6 +41,7 @@ class JobOrderAdmin(admin.ModelAdmin):
 
 class RawMaterialAdmin(admin.ModelAdmin):
     list_display = ('material_id', 'name', 'current_stock_kg', 'reorder_point_kg')
+    inlines = [MaterialRestockLogInline]
 
 admin.site.register(RawMaterial, RawMaterialAdmin)
 admin.site.register(Recipe, RecipeAdmin)
@@ -48,3 +54,4 @@ admin.site.register(MaterialUsageLog)
 admin.site.register(DispatchLog)
 admin.site.register(ExtrusionSession)
 admin.site.register(SessionMaterial)
+admin.site.register(MaterialRestockLog)

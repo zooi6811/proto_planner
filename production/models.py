@@ -17,6 +17,31 @@ class RawMaterial(models.Model):
     def __str__(self):
         return f"{self.material_id} - {self.name}"
 
+class MaterialRestockLog(models.Model):
+    """Logs incoming shipments of raw materials and automatically updates inventory."""
+    material = models.ForeignKey(RawMaterial, on_delete=models.CASCADE, related_name='restocks')
+    arrival_date = models.DateTimeField(auto_now_add=True)
+    amount_kg = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0.01)])
+    
+    # Optional tracking fields
+    supplier = models.CharField(max_length=100, blank=True, default="-")
+    po_number = models.CharField(max_length=50, blank=True, default="-")
+    recorded_by = models.CharField(max_length=50, default="Admin")
+
+    def save(self, *args, **kwargs):
+        is_new = self.pk is None
+        super().save(*args, **kwargs)
+        
+        # Only add to stock when the log is first created, not if it's merely updated
+        if is_new:
+            with transaction.atomic():
+                mat = RawMaterial.objects.select_for_update().get(pk=self.material.pk)
+                mat.current_stock_kg += Decimal(str(self.amount_kg))
+                mat.save()
+
+    def __str__(self):
+        return f"+{self.amount_kg} KG of {self.material.name} on {self.arrival_date.strftime('%Y-%m-%d')}"
+
 class Recipe(models.Model):
     formula_code = models.CharField(max_length=50, unique=True)
     description = models.CharField(max_length=200, blank=True)
