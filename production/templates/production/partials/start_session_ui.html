@@ -2,35 +2,53 @@
     {% csrf_token %}
     <input type="hidden" name="machine_no" value="{{ machine_no }}">
     
-    <div style="display: flex; justify-content: space-between; border-bottom: 2px solid #cbd5e1; padding-bottom: 10px; margin-bottom: 20px;">
-        <h2 style="margin: 0; color: #0284c7;">Start Run: Machine {{ machine_no }}</h2>
-        <select name="shift" required style="padding: 5px; font-weight: bold;"><option value="AM">AM Shift</option><option value="PM">PM Shift</option></select>
+    <div class="panel-header">
+        <h2 style="color: var(--action-blue);">Configure Run: Machine {{ machine_no }}</h2>
+        <select name="shift" required style="width: auto;">
+            <option value="AM">AM SHIFT</option>
+            <option value="PM">PM SHIFT</option>
+        </select>
     </div>
 
-    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
-        <div>
+    <div style="display: grid; grid-template-columns: 1fr 1.5fr; gap: 30px;">
+        
+        <div style="border-right: 2px solid var(--border-soft); padding-right: 30px;">
             <label class="input-label">Select Job Order</label>
-            <select name="job_order" required style="width: 100%; padding: 10px; margin-bottom: 15px;">
-                {% for jo in job_orders %}<option value="{{ jo.id }}">{{ jo.jo_number }} ({{ jo.customer }})</option>{% endfor %}
-            </select>
+            <input type="text" name="q" placeholder="Search Pending Jobs..." 
+                   hx-get="/search-jobs/?dept=extrusion" 
+                   hx-target="#extrusion-jo-list" 
+                   hx-trigger="keyup changed delay:300ms"
+                   style="margin-bottom: 15px;">
             
-            <label class="input-label">Target Run Amount (KG)</label>
-            <input type="number" name="target_amount" required style="width: 100%; padding: 15px; font-size: 1.5rem;" placeholder="e.g. 500">
+            <div id="extrusion-jo-list">
+                {% include 'production/partials/job_radio_list.html' %}
+            </div>
         </div>
 
-        <div style="background: #e2e8f0; padding: 15px; border-radius: 8px;">
-            <label class="input-label">Reserve Materials</label>
-            <p style="font-size: 0.85rem; color: #64748b;">Enter the total KG of material bags you are setting aside for this run.</p>
+        <div>
+            <div id="job-specs-container"></div>
             
-            {% for mat in raw_materials %}
-            <div style="display: flex; gap: 10px; margin-bottom: 10px;">
-                <input type="hidden" name="material_ids" value="{{ mat.id }}">
-                <span style="flex-grow: 1; font-weight: bold;">{{ mat.name }}</span>
-                <input type="number" name="reserved_amounts" value="0" style="width: 100px; padding: 5px;" placeholder="KG">
+            <div style="margin-bottom: 20px;">
+                <label class="input-label">Target Run Amount (KG)</label>
+                <input type="number" name="target_amount" required placeholder="0.00" class="text-mono" step="0.01">
             </div>
-            {% endfor %}
+
+            <div style="background: var(--surface-alt); padding: 15px; border: 1px solid var(--border-soft); border-radius: var(--radius);">
+                <label class="input-label">Physical Material Reservation</label>
+                <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0;">Log exact raw material bags placed at the machine hopper.</p>
+                
+                {% for mat in raw_materials %}
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; border-bottom: 1px dashed var(--border-soft); padding-bottom: 5px;">
+                    <input type="hidden" name="material_ids" value="{{ mat.id }}">
+                    <span style="font-weight: 600; color: var(--text-primary);">{{ mat.material_id }} - {{ mat.name }}</span>
+                    <input type="number" name="reserved_amounts" value="0" style="width: 120px; text-align: right;" step="0.01" min="0" class="text-mono">
+                </div>
+                {% endfor %}
+            </div>
+            
+            <button type="submit" class="btn btn-success" style="width: 100%; margin-top: 20px;">
+                LOCK IN & START EXTRUSION
+            </button>
         </div>
     </div>
-    
-    <button type="submit" class="btn-submit" style="margin-top: 20px; background-color: #10b981;">LOCK IN & START MACHINE</button>
 </form>

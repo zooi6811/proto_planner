@@ -49,8 +49,18 @@ from .models import ExtrusionSession, SessionMaterial # Ensure these are importe
 # -----------------------------------------------------------------------------
 # STATEFUL EXTRUSION SESSIONS
 # -----------------------------------------------------------------------------
-def load_machine_state(request, machine_no):
+def load_machine_state(request, machine_no=None):
     """Checks if a machine is currently running a job or is idle."""
+    
+    # 1. If it wasn't called internally with an argument, grab it from the HTMX GET request
+    if not machine_no:
+        machine_no = request.GET.get('machine_no')
+        
+    # 2. If it is still empty (e.g., they selected the default "-- Select --" option)
+    if not machine_no:
+        return HttpResponse("<p style='color: var(--text-muted); font-weight: bold; text-transform: uppercase;'>Awaiting Machine Selection...</p>")
+
+    # 3. Proceed with the original logic
     active_session = ExtrusionSession.objects.filter(machine_no=machine_no, status='ACTIVE').first()
     
     if active_session:
@@ -63,7 +73,6 @@ def load_machine_state(request, machine_no):
             'job_orders': job_orders,
             'raw_materials': raw_materials
         })
-
 def start_extrusion_session(request):
     """Locks the machine, reserves the material, and starts the job."""
     if request.method == "POST":
@@ -154,7 +163,8 @@ def submit_cutting(request):
             operator_name="Cutting Op"
         )
         job_order.refresh_from_db()
-        return render(request, 'production/partials/progress_bar.html', {'jo': job_order})
+        
+        return render(request, 'production/partials/cutting_success.html', {'jo': job_order})
 
 # -----------------------------------------------------------------------------
 # PACKING SUBMISSION
@@ -186,7 +196,8 @@ def submit_packing(request):
             operator_name="Packing Op"
         )
         job_order.refresh_from_db()
-        return render(request, 'production/partials/progress_bar.html', {'jo': job_order})
+        
+        return render(request, 'production/partials/packing_success.html', {'jo': job_order})
 
 # -----------------------------------------------------------------------------
 # HTMX FORM FETCHING & SEARCHING
@@ -197,19 +208,20 @@ def get_extrusion_form(request):
 
 def get_cutting_form(request):
     job_orders = JobOrder.objects.filter(total_extruded_kg__gt=0).order_by('-id')[:20]
-    return render(request, 'production/partials/cutting_form.html', {'job_orders': job_orders})
+    # Add 'dept': 'cutting' to the context here
+    return render(request, 'production/partials/cutting_form.html', {'job_orders': job_orders, 'dept': 'cutting'})
 
 def get_packing_form(request):
     job_orders = JobOrder.objects.filter(total_extruded_kg__gt=0).order_by('-id')[:20]
-    return render(request, 'production/partials/packing_form.html', {'job_orders': job_orders})
+    # Add 'dept': 'packing' to the context here
+    return render(request, 'production/partials/packing_form.html', {'job_orders': job_orders, 'dept': 'packing'})
 
 def search_jobs(request):
     query = request.GET.get('q', '')
-    dept = request.GET.get('dept', '') # BUG FIX 3: Capture the requesting department
+    dept = request.GET.get('dept', '') 
     
     jobs = JobOrder.objects.filter(order_quantity_kg__gt=0)
     
-    # Apply strict departmental queue logic to the search results
     if dept == 'extrusion':
         jobs = jobs.filter(total_extruded_kg__lt=F('order_quantity_kg'))
     elif dept in ['cutting', 'packing']:
@@ -218,7 +230,8 @@ def search_jobs(request):
     if query:
         jobs = jobs.filter(Q(jo_number__icontains=query) | Q(customer__icontains=query))
         
-    return render(request, 'production/partials/job_radio_list.html', {'job_orders': jobs[:20]})
+    # Crucial Fix: Pass 'dept' explicitly into the radio list context
+    return render(request, 'production/partials/job_radio_list.html', {'job_orders': jobs[:20], 'dept': dept})
 
 # -----------------------------------------------------------------------------
 # DASHBOARD & TOWER LOGIC
@@ -244,4 +257,6 @@ def control_tower(request):
 
 def get_job_specs(request, jo_id):
     job_order = get_object_or_404(JobOrder, id=jo_id)
-    return render(request, 'production/partials/job_spec_card.html', {'jo': job_order})
+    # Default to cutting if nothing is passed, just to be safe
+    dept = request.GET.get('dept', 'cutting') 
+    return render(request, 'production/partials/job_spec_card.html', {'jo': job_order, 'dept': dept})

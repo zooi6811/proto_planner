@@ -1,37 +1,29 @@
-<div class="dashboard-grid" style="grid-template-columns: 1fr 2.5fr;">
-    <div class="panel">
-        <div class="panel-title">1. Select Machine</div>
-        <div class="radio-group">
-            <button class="radio-label" style="width: 100%; border: none; margin-bottom: 10px;" 
-                    hx-get="/load-machine-state/B1/" hx-target="#machine-workspace">Machine B1</button>
-            <button class="radio-label" style="width: 100%; border: none; margin-bottom: 10px;" 
-                    hx-get="/load-machine-state/B6/" hx-target="#machine-workspace">Machine B6</button>
-        </div>
+<div class="panel">
+    <div class="panel-header">
+        <h2>Extrusion Department</h2>
     </div>
+    
+    <div style="display: grid; grid-template-columns: 1fr 2fr; gap: 20px;">
+        <div>
+            <label class="input-label">Machine Number</label>
+            <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0;">Select a machine to view its current state or initialise a new run.</p>
+            
+            <select name="machine_no" hx-get="/load-machine-state/" hx-target="#machine-workspace" hx-trigger="change">
+                <option value="" disabled selected>-- Select Machine --</option>
+                <option value="B1">B1</option>
+                <option value="B2">B2</option>
+                <option value="B3">B3</option>
+                <option value="B4">B4</option>
+                <option value="B5">B5</option>
+                <option value="B6">B6</option>
+                <option value="B7">B7</option>
+                <option value="B8">B8</option>
+                <option value="B9">B9</option>
+            </select>
+        </div>
 
-    <div id="machine-workspace" class="panel" style="background-color: #f8fafc; align-items: center; justify-content: center;">
-        <h3 style="color: #94a3b8;">Select a machine to view or start a session.</h3>
+        <div id="machine-workspace" style="background: var(--surface-alt); border: 2px dashed var(--border-soft); border-radius: var(--radius); padding: 20px; display: flex; align-items: center; justify-content: center;">
+            <p style="color: var(--text-muted); font-weight: bold; text-transform: uppercase;">Awaiting Machine Selection...</p>
+        </div>
     </div>
 </div>
-
-    <div class="panel">
-        <div class="panel-title">3. Production Details</div>
-        
-        <div id="digital-spec-container">
-            <div style="padding: 15px; border: 2px dashed #cbd5e1; text-align: center; color: #64748b; border-radius: 8px; margin-bottom: 20px; font-weight: bold;">
-                Select a Job Order to view production instructions.
-            </div>
-        </div>
-
-        <div class="input-group">
-            <label>Roll Weight (KG)</label>
-            <input type="number" step="0.01" min="0.01" max="500" name="roll_weight" required placeholder="0.00">
-        </div>
-        <div class="input-group">
-            <label>Wastage (KG)</label>
-            <input type="number" step="0.01" min="0" name="wastage" value="0" placeholder="0.00">
-        </div>
-        <div id="feedback-container">Awaiting input...</div>
-        <button type="submit" class="btn-submit">Submit Extrusion Log</button>
-    </div>
-</form>

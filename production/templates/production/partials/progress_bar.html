@@ -1,21 +1,3 @@
-<h3>Live Job Status: {{ jo.jo_number }}</h3>
-<p><strong>Customer:</strong> {{ jo.customer }} | <strong>Target Order:</strong> {{ jo.order_quantity_kg }} KG</p>
-
-<div style="display: flex; justify-content: space-around; text-align: left; margin-top: 20px; flex-wrap: wrap; gap: 20px;">
-    
-    <div style="flex: 1; min-width: 200px;">
-        <p style="color: #e67e22; font-weight: bold; margin-bottom: 5px;">Total Extruded: {{ jo.total_extruded_kg }} KG</p>
-        <div style="width: 100%; background-color: #eee; border-radius: 5px; overflow: hidden;">
-            <div style="width: {{ jo.extrusion_progress|stringformat:'.1f' }}%; max-width: 100%; background-color: #e67e22; height: 12px;"></div>
-        </div>
-    </div>
-
-    <div style="flex: 1; min-width: 200px;">
-        <p style="color: #9b59b6; font-weight: bold; margin-bottom: 5px;">Total Cut: {{ jo.total_cut_kg }} KG</p>
-    </div>
-
-    <div style="flex: 1; min-width: 200px;">
-        <p style="color: #2ecc71; font-weight: bold; margin-bottom: 5px;">Total Packed: {{ jo.total_packed_kg }} KG</p>
-    </div>
-
+<div style="background: #dcfce7; border: 2px solid var(--status-green); border-left: 6px solid var(--status-green); color: #166534; padding: 15px; border-radius: var(--radius); font-weight: bold;">
+    SUCCESS: Log saved for {{ jo.jo_number }}.
 </div>

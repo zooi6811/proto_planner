@@ -12,7 +12,7 @@ urlpatterns = [
     path('get-packing/', views.get_packing_form, name='get_packing'),
 
     # Stateful Extrusion Sessions (NEW)
-    path('load-machine-state/<str:machine_no>/', views.load_machine_state, name='load_machine_state'),
+    path('load-machine-state/', views.load_machine_state, name='load_machine_state'),
     path('start-session/', views.start_extrusion_session, name='start_session'),
     path('log-session-roll/', views.log_session_roll, name='log_session_roll'),
     path('stop-session/<int:session_id>/', views.stop_extrusion_session, name='stop_session'),

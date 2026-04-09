@@ -1,0 +1,28 @@
+<div style="margin-bottom: 20px;">
+    <div style="display: flex; justify-content: space-between; font-size: 0.85rem; margin-bottom: 5px; color: var(--text-muted);">
+        <span><strong>Progress:</strong> {{ current_amount|default:"0"|floatformat:1 }} kg</span>
+        <span><strong>Target:</strong> {{ target_amount|default:"0"|floatformat:1 }} kg</span>
+    </div>
+    
+    <div style="background: var(--border-soft); border-radius: 4px; width: 100%; height: 12px; overflow: hidden;">
+        
+        {% if target_amount and target_amount > 0 %}
+            <div style="
+                background: {% if current_amount >= target_amount %}#28a745{% else %}var(--action-blue){% endif %}; 
+                height: 100%; 
+                /* Cap at 100% physically just in case of overproduction */
+                width: min({% widthratio current_amount target_amount 100 %}%, 100%); 
+                transition: width 0.4s ease-in-out;">
+            </div>
+        {% else %}
+            <div style="background: var(--action-blue); height: 100%; width: 0%;"></div>
+        {% endif %}
+        
+    </div>
+    
+    {% if current_amount and target_amount and current_amount >= target_amount %}
+        <p style="color: #28a745; font-weight: bold; font-size: 0.85rem; margin-top: 5px;">
+            Target Met!
+        </p>
+    {% endif %}
+</div>

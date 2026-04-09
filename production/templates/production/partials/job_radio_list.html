@@ -1,16 +1,35 @@
-{% if not job_orders %}
-    <div style="padding: 20px; text-align: center; color: #94a3b8; font-weight: bold;">
-        No active job orders match your search.
-    </div>
-{% endif %}
+<style>
+    /* Visually hide the radio input, but keep it accessible for form submission */
+    .radio-btn { position: absolute; opacity: 0; pointer-events: none; }
+    .radio-label { 
+        display: block; padding: 12px 15px; margin-bottom: 10px; cursor: pointer; transition: 0.1s;
+        background-color: var(--surface); border: 2px solid var(--border-soft); border-radius: var(--radius); 
+    }
+    .radio-label:hover { border-color: var(--border-hard); }
+    .radio-btn:checked + .radio-label { 
+        background-color: var(--surface-alt); border-color: var(--action-blue); 
+        box-shadow: inset 4px 0 0 var(--action-blue);
+    }
+</style>
 
-{% for jo in job_orders %}
-<input type="radio" name="job_order" id="jo-{{ jo.id }}" value="{{ jo.id }}" class="radio-btn" required
-       hx-get="/get-job-specs/{{ jo.id }}/" 
-       hx-target="#digital-spec-container" 
-       hx-swap="innerHTML">
-<label for="jo-{{ jo.id }}" class="radio-label jo-label">
-    <span class="jo-customer">{{ jo.customer }}</span>
-    <span class="jo-details">JO: {{ jo.jo_number }} | Target: {{ jo.order_quantity_kg }} KG</span>
-</label>
-{% endfor %}
+<div style="max-height: 400px; overflow-y: auto; padding-right: 10px;">
+    {% for jo in job_orders %}
+    <div>
+        <input type="radio" name="job_order" value="{{ jo.id }}" id="jo_{{ jo.id }}" class="radio-btn" required
+       hx-get="/get-job-specs/{{ jo.id }}/?dept={{ dept }}" 
+       hx-target="#job-specs-container">
+        
+        <label for="jo_{{ jo.id }}" class="radio-label">
+            <div style="font-weight: bold; font-size: 1.1rem; color: var(--text-primary);">{{ jo.jo_number }}</div>
+            <div style="color: var(--text-muted); font-size: 0.9rem; margin-top: 2px;">{{ jo.customer }}</div>
+            <div class="text-mono" style="font-size: 0.8rem; color: var(--action-blue); margin-top: 5px; font-weight: bold;">
+                TARGET: {{ jo.order_quantity_kg }} KG
+            </div>
+        </label>
+    </div>
+    {% empty %}
+    <div style="padding: 15px; text-align: center; color: var(--text-muted); font-style: italic;">
+        No pending jobs found.
+    </div>
+    {% endfor %}
+</div>

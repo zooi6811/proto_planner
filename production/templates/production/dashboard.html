@@ -1,57 +1,32 @@
+{% load static %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <title>Production Terminal</title>
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <link rel="stylesheet" href="{% static 'css/industrial.css' %}">
     <style>
-        :root {
-            --bg-color: #f1f5f9; --card-bg: #ffffff; --text-main: #334155; 
-            --text-muted: #64748b; --border-color: #cbd5e1; --accent-blue: #0284c7; --accent-green: #059669;
-        }
-        body { font-family: 'Segoe UI', system-ui, sans-serif; background-color: var(--bg-color); color: var(--text-main); margin: 0; padding: 20px; box-sizing: border-box; }
-        
-        /* Navigation Tabs */
+        /* Specific layout for the terminal */
         .nav-tabs { display: flex; gap: 10px; margin-bottom: 20px; }
         .tab-btn {
-            flex: 1; padding: 20px; font-size: 1.5rem; font-weight: bold; text-transform: uppercase;
-            background-color: var(--border-color); color: var(--text-muted); border: none; border-radius: 8px;
-            cursor: pointer; transition: 0.2s; box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            flex: 1; padding: 15px; font-size: 1.2rem; font-weight: bold; text-transform: uppercase;
+            background-color: var(--border-soft); color: var(--text-muted); 
+            border: 2px solid var(--border-hard); border-bottom: none; border-radius: var(--radius) var(--radius) 0 0;
+            cursor: pointer; transition: 0.2s;
         }
-        .tab-btn.active { background-color: var(--text-main); color: white; }
-
-        /* Shared Grid CSS for the imported partials */
-        .dashboard-grid { display: grid; grid-template-columns: 1fr 1.5fr 1fr; gap: 20px; height: calc(100vh - 140px); }
-        .panel { background: var(--card-bg); border-radius: 8px; border: 1px solid var(--border-color); padding: 20px; display: flex; flex-direction: column; }
-        .panel-title { font-size: 1.2rem; font-weight: bold; margin-bottom: 20px; color: var(--text-main); text-transform: uppercase; }
-        .input-label { font-weight: 600; color: var(--text-muted); margin-bottom: 8px; display: block; }
-        .radio-group { display: flex; flex-direction: column; gap: 10px; margin-bottom: 25px; }
-        /* Visually hide the radio buttons without breaking HTML5 validation */
-        .radio-btn { 
-            position: absolute; 
-            opacity: 0; 
-            width: 1px; 
-            height: 1px; 
-            overflow: hidden; 
-            pointer-events: none;
+        .tab-btn.active { 
+            background-color: var(--surface); color: var(--action-blue); 
+            border-bottom: 4px solid var(--action-blue); 
         }
-        .radio-label { display: flex; flex-direction: column; padding: 15px 20px; background-color: var(--bg-color); border: 2px solid var(--border-color); border-radius: 6px; font-size: 1.1rem; font-weight: 600; cursor: pointer; transition: 0.2s; }
-        .radio-btn:checked + .radio-label { background-color: #e0f2fe; border-color: var(--accent-blue); color: var(--accent-blue); }
-        .jo-customer { font-size: 1.3rem; font-weight: bold; color: var(--text-main); }
-        .jo-details { font-size: 0.95rem; color: var(--text-muted); font-weight: normal; margin-top: 5px; }
-        .input-group { margin-bottom: 20px; }
-        .input-group label { display: block; font-size: 1rem; font-weight: 600; margin-bottom: 8px; color: var(--text-muted); }
-        .input-group input { width: 100%; padding: 15px; font-size: 1.5rem; text-align: right; border: 2px solid var(--border-color); border-radius: 6px; box-sizing: border-box; background-color: var(--bg-color); color: var(--text-main); font-weight: bold; }
-        .input-group input:focus { outline: none; border-color: var(--accent-blue); background-color: white; }
-        .btn-submit { margin-top: auto; width: 100%; padding: 18px; font-size: 1.2rem; font-weight: bold; background-color: var(--accent-blue); color: white; border: none; border-radius: 6px; cursor: pointer; text-transform: uppercase; }
-        #feedback-container { margin-top: 20px; margin-bottom: 20px; padding: 15px; border-radius: 6px; background-color: #f8fafc; border: 1px solid var(--border-color); text-align: center; font-weight: 500; }
+        .dashboard-grid { display: grid; grid-template-columns: 1fr 1.5fr 1fr; gap: 20px; height: calc(100vh - 120px); }
     </style>
 </head>
-<body>
+<body hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
 
     <div class="nav-tabs" id="tab-container">
-        <button class="tab-btn active" hx-get="/get-extrusion/" hx-target="#form-workspace" hx-swap="innerHTML" onclick="setActiveTab(this)">1. Extrusion</button>
-        <button class="tab-btn" hx-get="/get-cutting/" hx-target="#form-workspace" hx-swap="innerHTML" onclick="setActiveTab(this)">2. Cutting</button>
-        <button class="tab-btn" hx-get="/get-packing/" hx-target="#form-workspace" hx-swap="innerHTML" onclick="setActiveTab(this)">3. Packing</button>
+        <button class="tab-btn active" hx-get="/get-extrusion/" hx-target="#form-workspace" hx-swap="innerHTML" onclick="setActiveTab(this)">Extrusion Log</button>
+        <button class="tab-btn" hx-get="/get-cutting/" hx-target="#form-workspace" hx-swap="innerHTML" onclick="setActiveTab(this)">Cutting Log</button>
+        <button class="tab-btn" hx-get="/get-packing/" hx-target="#form-workspace" hx-swap="innerHTML" onclick="setActiveTab(this)">Packing Log</button>
     </div>
 
     <div id="form-workspace">
@@ -59,10 +34,8 @@
     </div>
 
     <script>
-        // Simple script to move the 'active' styling class to the clicked tab
         function setActiveTab(clickedBtn) {
-            const buttons = document.querySelectorAll('.tab-btn');
-            buttons.forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
             clickedBtn.classList.add('active');
         }
     </script>

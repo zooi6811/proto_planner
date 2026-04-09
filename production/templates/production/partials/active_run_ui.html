@@ -1,33 +1,46 @@
-<div style="width: 100%;">
-    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #cbd5e1; padding-bottom: 10px; margin-bottom: 20px;">
+<div style="border: 2px solid var(--status-green); padding: 20px; border-radius: var(--radius); background: var(--surface);">
+    <div class="panel-header" style="border-bottom-color: var(--status-green);">
+        <h2 style="color: var(--status-green); display: flex; align-items: center; gap: 10px;">
+            <div class="status-dot status-live"></div> ACTIVE RUN: MACHINE {{ session.machine_no }}
+        </h2>
+        <span style="font-weight: bold; color: var(--text-muted);">SHIFT: {{ session.shift }}</span>
+    </div>
+
+    <div style="margin-bottom: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
         <div>
-            <h2 style="margin: 0; color: #059669;">🟢 ACTIVE RUN: {{ session.machine_no }}</h2>
-            <span style="color: #64748b; font-weight: bold;">{{ session.job_order.jo_number }} | {{ session.job_order.customer }}</span>
+            <p class="input-label">Job Order</p>
+            <div style="font-size: 1.2rem; font-weight: bold;">{{ session.job_order.jo_number }}</div>
+            <div style="color: var(--text-muted);">{{ session.job_order.customer }}</div>
         </div>
-        <button hx-post="/stop-session/{{ session.id }/" hx-target="#machine-workspace" style="background-color: #ef4444; color: white; padding: 10px 20px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer;">
-            STOP JOB EARLY
-        </button>
+        <div style="text-align: right;">
+            <p class="input-label">Output Progress</p>
+            <div style="font-size: 1.2rem; font-weight: bold;" class="text-mono">
+                {{ session.total_output_kg }} / {{ session.target_amount_kg }} KG
+            </div>
+        </div>
     </div>
 
-    <div style="background: #f1f5f9; padding: 20px; border-radius: 8px; margin-bottom: 20px; text-align: center;">
-        <div style="font-size: 3rem; font-weight: 900; color: #0284c7;">
-            {{ session.total_output_kg }} <span style="font-size: 1.5rem; color: #94a3b8;">/ {{ session.target_amount_kg }} KG Target</span>
-        </div>
-        <p style="margin: 5px 0 0 0; color: #64748b; font-weight: bold;">Wastage: {{ session.total_wastage_kg }} KG</p>
-    </div>
-
-    <form hx-post="/log-session-roll/" hx-target="#machine-workspace" style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; background: white; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0;">
+    <form hx-post="/log-session-roll/" hx-target="#machine-workspace" style="background: var(--bg-floor); padding: 15px; border-radius: var(--radius); margin-bottom: 20px;">
         {% csrf_token %}
         <input type="hidden" name="session_id" value="{{ session.id }}">
+        <h3 style="margin-bottom: 15px; font-size: 1rem; color: var(--text-muted);">LOG NEW ROLL</h3>
         
-        <div>
-            <label class="input-label">New Roll Weight (KG)</label>
-            <input type="number" step="0.01" name="roll_weight" required style="width: 100%; padding: 15px; font-size: 1.5rem;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+            <div>
+                <label class="input-label">Roll Weight (KG)</label>
+                <input type="number" name="roll_weight" step="0.01" min="0.01" required class="text-mono">
+            </div>
+            <div>
+                <label class="input-label">Wastage (KG)</label>
+                <input type="number" name="wastage" step="0.01" min="0" value="0" class="text-mono">
+            </div>
         </div>
-        <div>
-            <label class="input-label">Wastage (KG)</label>
-            <input type="number" step="0.01" name="wastage" value="0" style="width: 100%; padding: 15px; font-size: 1.5rem;">
-        </div>
-        <button type="submit" class="btn-submit" style="grid-column: span 2;">LOG ROLL TO SESSION</button>
+        <button type="submit" class="btn btn-success" style="width: 100%; margin-top: 15px;">SUBMIT ROLL</button>
     </form>
+
+    <div style="text-align: right;">
+        <button hx-post="/stop-session/{{ session.id }}/" hx-target="#machine-workspace" class="btn" style="background-color: var(--status-red); color: white; font-size: 0.9rem; padding: 10px 15px;">
+            TERMINATE SESSION EARLY
+        </button>
+    </div>
 </div>

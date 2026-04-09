@@ -1,32 +1,32 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <title>Central Control Tower</title>
+    <title>Live Production Status</title>
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
     <script src="https://unpkg.com/htmx.org/dist/ext/django-htmx.js"></script>
+    <link rel="stylesheet" href="/static/css/industrial.css">
     <style>
-        :root { --bg-color: #f1f5f9; --card-bg: #ffffff; --text-main: #334155; --text-muted: #64748b; --border-color: #cbd5e1; }
-        body { font-family: 'Segoe UI', system-ui, sans-serif; background-color: var(--bg-color); color: var(--text-main); margin: 0; padding: 20px; }
-        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; border-bottom: 2px solid var(--border-color); padding-bottom: 15px;}
-        .header h1 { margin: 0; font-size: 2rem; color: #0f172a; }
-        .dashboard-grid { display: grid; gap: 20px; }
-        .panel { background: var(--card-bg); border-radius: 8px; border: 1px solid var(--border-color); padding: 25px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
-        .panel-title { font-size: 1.2rem; font-weight: bold; margin-bottom: 20px; margin-top: 0; color: #0f172a; text-transform: uppercase; letter-spacing: 0.5px; }
+        .header { 
+            background: var(--brand-dark); padding: 20px; border-radius: var(--radius);
+            display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;
+        }
+        .header h1 { color: #ffffff; font-size: 1.8rem; }
+        .live-tag { color: var(--border-soft); font-family: var(--font-mono); font-weight: bold; font-size: 0.9rem; }
     </style>
 </head>
 <body hx-ext="django-htmx">
 
     <div class="header">
-        <h1>🏭 Central Control Tower</h1>
+        <h1>Live Production Status</h1>
         <div style="display: flex; align-items: center; gap: 10px;">
-            <div style="width: 12px; height: 12px; background-color: #10b981; border-radius: 50%; box-shadow: 0 0 8px #10b981;"></div>
-            <span style="font-weight: bold; color: var(--text-muted);">LIVE SYNC</span>
+            <div class="status-dot status-live"></div>
+            <span class="live-tag">SYSTEM ONLINE // SYNCING</span>
         </div>
     </div>
 
     <div hx-get="/control-tower/" hx-trigger="every 10s, load" hx-swap="innerHTML">
-        <div style="text-align: center; padding: 50px; color: #94a3b8; font-size: 1.2rem;">
-            Establishing connection to factory floor...
+        <div style="text-align: center; padding: 50px; color: var(--border-hard); font-family: var(--font-mono);">
+            > ESTABLISHING CONNECTION TO FLOOR TERMINALS...
         </div>
     </div>
 

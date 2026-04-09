@@ -1,0 +1,100 @@
+{% extends "admin/base.html" %}
+
+{% block title %}{{ title }} | System Admin{% endblock %}
+
+{% block branding %}
+<h1 id="site-name"><a href="{% url 'admin:index' %}" style="font-family: 'Segoe UI', system-ui, sans-serif; font-weight: bold; letter-spacing: 1px;">⚙️ PROTO_PLANNER CORE</a></h1>
+{% endblock %}
+
+{% block extrastyle %}
+{{ block.super }}
+<style>
+    /* Force Django Admin to adopt the Industrial theme */
+    :root {
+        --primary: #1e293b; /* Slate 800 - Replaces default blue */
+        --secondary: #334155; /* Slate 700 - Sub-headers */
+        --accent: #0284c7; /* Sky 600 - Action blue for highlights */
+        --primary-fg: #ffffff;
+        
+        --body-bg: #e2e8f0; /* Slate 200 - Factory floor grey */
+        --body-fg: #0f172a; /* Slate 900 - High contrast text */
+        --body-quiet-color: #475569;
+        
+        --hairline-color: #94a3b8; /* Slate 400 */
+        --border-color: #cbd5e1; /* Slate 300 */
+        
+        --error-fg: #ef4444; /* Red 500 */
+        --success-fg: #10b981; /* Emerald 500 */
+    }
+    
+    body { 
+        font-family: 'Segoe UI', system-ui, sans-serif; 
+    }
+    
+    /* Make the admin header boxy and dark */
+    #header { 
+        background: var(--primary); 
+        color: var(--primary-fg); 
+        border-bottom: 4px solid var(--accent); 
+        padding: 15px 20px;
+    }
+    #header a:link, #header a:visited { 
+        color: var(--primary-fg); 
+    }
+    
+    /* Flatten and sharpen module cards */
+    .module { 
+        background: #ffffff; 
+        border-radius: 4px; 
+        box-shadow: 2px 2px 0 rgba(0,0,0,0.05); 
+        border: 1px solid var(--border-color); 
+    }
+    .module h2, .module caption, #changelist-filter h2 { 
+        background: var(--secondary); 
+        color: #fff; 
+        border-radius: 3px 3px 0 0; 
+        text-transform: uppercase; 
+        font-size: 0.9rem; 
+        letter-spacing: 0.5px;
+    }
+    
+    /* Input adjustments */
+    input[type=text], input[type=password], input[type=email], input[type=url], input[type=number], select, textarea {
+        border-radius: 4px; 
+        border: 2px solid var(--border-color); 
+        padding: 8px 10px; 
+        font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+        background-color: #f8fafc;
+    }
+    input:focus, select:focus, textarea:focus { 
+        border-color: var(--accent); 
+        background-color: #ffffff;
+    }
+    
+    /* Buttons */
+    .button, input[type=submit], input[type=button], .submit-row input, a.button {
+        background: var(--accent); 
+        border-radius: 4px; 
+        text-transform: uppercase; 
+        font-weight: bold; 
+        font-family: 'Segoe UI', system-ui, sans-serif; 
+        border: none; 
+        box-shadow: none;
+        padding: 10px 15px;
+        transition: 0.1s;
+    }
+    .button:active, input[type=submit]:active, .submit-row input:active, a.button:active {
+        transform: translateY(2px);
+    }
+    
+    /* The primary "Save" button becomes our status green */
+    .button.default, input[type=submit].default, .submit-row input.default {
+        background: var(--success-fg); 
+    }
+    
+    /* Sidebar Links */
+    a:link, a:visited {
+        color: var(--accent);
+    }
+</style>
+{% endblock %}

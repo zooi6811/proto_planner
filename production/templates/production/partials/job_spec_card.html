@@ -1,36 +1,32 @@
-<div style="background-color: #f8fafc; border: 2px solid #cbd5e1; border-radius: 8px; padding: 20px; margin-bottom: 20px;">
-    <h3 style="margin-top: 0; color: #0284c7; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px;">
-        📄 DIGITAL PRODUCTION FORM: {{ jo.jo_number }}
+<div style="background: var(--brand-dark); color: var(--primary-fg); padding: 15px; border-radius: var(--radius); margin-bottom: 20px;">
+    <h3 style="margin: 0 0 10px 0; color: var(--action-blue); border-bottom: 1px solid var(--border-hard); padding-bottom: 5px;">
+        J.O. Number: {{ jo.jo_number }}
     </h3>
     
-    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; font-size: 1.1rem;">
-        <div><strong>Customer:</strong> {{ jo.customer }}</div>
-        <div><strong>PO Number:</strong> {{ jo.po_number }}</div>
-        
-        <div><strong>Dimensions:</strong> {{ jo.product_dimension }}</div>
-        <div><strong>Target Order:</strong> {{ jo.order_quantity_kg }} KG</div>
-        
-        <div style="grid-column: span 2;">
-            <strong>Formula / Material:</strong> 
-            {% if jo.recipe %}{{ jo.recipe.formula_code }}{% else %}Standard{% endif %}
-        </div>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 0.9rem; margin-bottom: 10px;">
+        <div><span style="color: var(--border-hard);">Customer:</span> <span class="text-bright">{{ jo.customer }}</span></div>
+        <div><span style="color: var(--border-hard);">P.O. Number:</span> <span class="text-bright">{{ jo.po_number|default:"-" }}</span></div>
+        <div><span style="color: var(--border-hard);">Dimensions:</span> <span class="text-bright">{{ jo.product_dimension|default:"Standard" }}</span></div>
+        <div><span style="color: var(--border-hard);">Delivery:</span> <span class="text-bright">{{ jo.target_delivery_date|default:"TBD" }}</span></div>
     </div>
 
-    <div style="display: flex; gap: 10px; margin-top: 20px; border-top: 1px dashed #cbd5e1; padding-top: 15px;">
-        <span style="padding: 5px 10px; border-radius: 4px; font-weight: bold; background-color: {% if jo.printing_required %}#fef08a{% else %}#e2e8f0{% endif %};">
-            Printing: {% if jo.printing_required %}YES{% else %}NO{% endif %}
-        </span>
-        <span style="padding: 5px 10px; border-radius: 4px; font-weight: bold; background-color: {% if jo.sealing_required %}#fef08a{% else %}#e2e8f0{% endif %};">
-            Sealing: {% if jo.sealing_required %}YES{% else %}NO{% endif %}
-        </span>
-        <span style="padding: 5px 10px; border-radius: 4px; font-weight: bold; background-color: {% if jo.slitting_required %}#fef08a{% else %}#e2e8f0{% endif %};">
-            Slitting: {% if jo.slitting_required %}YES{% else %}NO{% endif %}
-        </span>
+    <div style="background: rgba(0,0,0,0.2); padding: 10px; border-radius: 4px; font-size: 0.85rem;">
+        <span style="color: var(--border-hard); margin-right: 10px;">Required Ops:</span>
+        {% if jo.printing_required %}<span style="background: var(--action-blue); padding: 2px 6px; border-radius: 3px; font-weight: bold; margin-right: 5px;">PRINT</span>{% endif %}
+        {% if jo.sealing_required %}<span style="background: var(--action-blue); padding: 2px 6px; border-radius: 3px; font-weight: bold; margin-right: 5px;">SEAL</span>{% endif %}
+        {% if jo.slitting_required %}<span style="background: var(--action-blue); padding: 2px 6px; border-radius: 3px; font-weight: bold;">SLIT</span>{% endif %}
+        {% if not jo.printing_required and not jo.sealing_required and not jo.slitting_required %}
+            <span style="color: var(--border-hard); font-style: italic;">Standard run only.</span>
+        {% endif %}
     </div>
+</div>
 
-    {% if jo.remarks != "-" %}
-    <div style="margin-top: 15px; background-color: #fee2e2; padding: 10px; border-left: 4px solid #ef4444; color: #991b1b;">
-        <strong>⚠️ Remarks / Special Instructions:</strong> {{ jo.remarks }}
-    </div>
+<div id="active-progress-bar" hx-swap-oob="true">
+    {% if dept == 'packing' %}
+        {% include 'production/partials/progress_indicator.html' with current_amount=jo.total_packed_kg target_amount=jo.total_cut_kg %}
+    {% else %}
+        {% include 'production/partials/progress_indicator.html' with current_amount=jo.total_cut_kg target_amount=jo.total_extruded_kg %}
     {% endif %}
 </div>
+
+<div id="feedback-container" hx-swap-oob="true"></div>

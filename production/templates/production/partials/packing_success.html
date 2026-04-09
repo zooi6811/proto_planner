@@ -1,0 +1,7 @@
+<div style="padding: 15px; background: #28a745; color: white; border-radius: 4px; font-weight: bold; text-align: center;">
+    Packing log submitted successfully!
+</div>
+
+<div id="active-progress-bar" hx-swap-oob="true">
+    {% include 'production/partials/progress_indicator.html' with current_amount=jo.total_packed_kg target_amount=jo.total_cut_kg %}
+</div>

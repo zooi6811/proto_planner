@@ -1,0 +1,88 @@
+:root {
+    /* Industrial Colour Palette */
+    --bg-floor: #e2e8f0;      /* Slate 200 - Factory floor grey */
+    --surface: #ffffff;       /* Pure white for data panels */
+    --surface-alt: #f8fafc;   /* Slate 50 - Subtle offset */
+    
+    --text-primary: #0f172a;  /* Slate 900 - High contrast text */
+    --text-muted: #475569;    /* Slate 600 - Secondary info */
+    
+    --border-hard: #94a3b8;   /* Slate 400 - Distinct boundaries */
+    --border-soft: #cbd5e1;   /* Slate 300 - Internal dividers */
+    
+    /* Action & Status Colours */
+    --brand-dark: #1e293b;    /* Slate 800 - Headers and primary navigation */
+    --action-blue: #0284c7;   /* Sky 600 - Primary buttons */
+    --status-green: #10b981;  /* Emerald 500 - Go/Active */
+    --status-red: #ef4444;    /* Red 500 - Stop/Error */
+    
+    --radius: 4px;            /* Sharp, practical corners */
+    --font-sans: 'Segoe UI', system-ui, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+body {
+    font-family: var(--font-sans);
+    background-color: var(--bg-floor);
+    color: var(--text-primary);
+    margin: 0;
+    padding: 20px;
+    box-sizing: border-box;
+}
+
+/* Typography */
+h1, h2, h3 { margin: 0; color: var(--text-primary); text-transform: uppercase; letter-spacing: 0.5px; }
+.text-mono { font-family: var(--font-mono); }
+
+/* Structural Panels */
+.panel {
+    background: var(--surface);
+    border: 1px solid var(--border-hard);
+    border-radius: var(--radius);
+    padding: 20px;
+    box-shadow: 2px 2px 0px rgba(0,0,0,0.05); /* Harsh, flat shadow */
+}
+.panel-header {
+    border-bottom: 2px solid var(--border-soft);
+    padding-bottom: 10px;
+    margin-bottom: 15px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+/* Forms & Inputs */
+.input-label {
+    display: block; font-size: 0.85rem; font-weight: 700; 
+    color: var(--text-muted); text-transform: uppercase; margin-bottom: 5px;
+}
+input[type="number"], input[type="text"], select {
+    width: 100%; padding: 12px; font-size: 1.2rem;
+    border: 2px solid var(--border-hard); border-radius: var(--radius);
+    background-color: var(--surface-alt); color: var(--text-primary);
+    box-sizing: border-box; font-family: var(--font-mono); font-weight: bold;
+}
+input:focus, select:focus {
+    outline: none; border-color: var(--action-blue); background-color: var(--surface);
+}
+
+/* Buttons */
+.btn {
+    padding: 15px 20px; font-size: 1.1rem; font-weight: bold; text-transform: uppercase;
+    border: none; border-radius: var(--radius); cursor: pointer; transition: 0.1s;
+    text-align: center; display: inline-block;
+}
+.btn-primary { background-color: var(--action-blue); color: white; }
+.btn-primary:active { transform: translateY(2px); background-color: #0369a1; }
+.btn-success { background-color: var(--status-green); color: white; }
+.btn-success:active { transform: translateY(2px); background-color: #059669; }
+
+/* Status Indicators */
+.status-dot {
+    width: 12px; height: 12px; border-radius: 50%; display: inline-block;
+}
+.status-live { background-color: var(--status-green); box-shadow: 0 0 8px var(--status-green); }
+
+.text-bright {
+    color: #ffffff !important; 
+}
