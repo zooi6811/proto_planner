@@ -3,6 +3,7 @@ from django.db.models import F
 from decimal import Decimal
 from django.core.validators import MinValueValidator
 from django.utils import timezone
+from django.core.exceptions import ValidationError
 
 # -----------------------------------------------------------------------------
 # MASTER DATA & INVENTORY
@@ -53,6 +54,14 @@ class RecipeItem(models.Model):
     recipe = models.ForeignKey(Recipe, on_delete=models.CASCADE, related_name='ingredients')
     material = models.ForeignKey(RawMaterial, on_delete=models.CASCADE)
     ratio = models.DecimalField(max_digits=5, decimal_places=4)
+
+    def clean(self):
+        if self.ratio <= 0 or self.ratio > 1:
+            raise ValidationError({'ratio': 'Ratio must be strictly between 0 and 1 (0% to 100%).'})
+
+    def save(self, *args, **kwargs):
+        self.clean()
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.recipe.formula_code} -> {self.material.name} ({self.ratio * 100}%)"
@@ -173,6 +182,12 @@ class JobOrder(models.Model):
     def ready_to_ship_kg(self):
         # Goods packed and waiting in the warehouse
         return float(self.total_packed_kg) - float(self.total_shipped_kg)
+    
+    @property
+    def remaining_extrusion_kg(self):
+        """Calculates how much of the original order is left to physically extrude."""
+        remaining = float(self.order_quantity_kg) - float(self.total_extruded_kg)
+        return max(0, remaining) # Prevents negative numbers if they slightly over-extrude
 
     def __str__(self):
         return f"JO: {self.jo_number} - {self.customer}"
@@ -309,7 +324,12 @@ class ExtrusionLog(models.Model):
     roll_weight_kg = models.DecimalField(max_digits=8, decimal_places=2, validators=[MinValueValidator(0.01)])
     wastage_kg = models.DecimalField(max_digits=8, decimal_places=2, default=0, validators=[MinValueValidator(0)])
 
+    def clean(self):
+        if float(self.wastage_kg) < 0 or float(self.wastage_kg) > float(self.roll_weight_kg):
+            raise ValidationError({'wastage_kg': 'Wastage cannot be negative or greater than the total roll weight.'})
+
     def save(self, *args, **kwargs):
+        self.clean()
         is_new = self.pk is None 
         super().save(*args, **kwargs)
 
@@ -339,7 +359,14 @@ class CuttingLog(models.Model):
     output_kg = models.DecimalField(max_digits=8, decimal_places=2, validators=[MinValueValidator(0.01)])
     wastage_kg = models.DecimalField(max_digits=8, decimal_places=2, default=0, validators=[MinValueValidator(0)])
 
+    def clean(self):
+        if self.job_order_id:
+            remaining = float(self.job_order.total_extruded_kg) - float(self.job_order.total_cut_kg)
+            if self.pk is None and float(self.output_kg) > (remaining * 1.05):
+                raise ValidationError({'output_kg': f'Cannot cut {self.output_kg}kg. Only {remaining:.1f}kg remains from Extrusion.'})
+
     def save(self, *args, **kwargs):
+        self.clean()
         is_new = self.pk is None
         super().save(*args, **kwargs)
         if is_new:
@@ -355,7 +382,15 @@ class PackingLog(models.Model):
     packing_size_kg = models.DecimalField(max_digits=6, decimal_places=2, validators=[MinValueValidator(0.01)], help_text="KG per Bag/Pallet")
     quantity_packed = models.IntegerField(validators=[MinValueValidator(1)], help_text="Number of Bags/Pallets")
 
+    def clean(self):
+        if self.job_order_id:
+            remaining = float(self.job_order.total_cut_kg) - float(self.job_order.total_packed_kg)
+            total_weight = float(self.packing_size_kg) * float(self.quantity_packed)
+            if self.pk is None and total_weight > (remaining * 1.05):
+                raise ValidationError({'quantity_packed': f'Attempting to pack {total_weight:.1f}kg, but only {remaining:.1f}kg has been cut and is available.'})
+
     def save(self, *args, **kwargs):
+        self.clean()
         is_new = self.pk is None
         super().save(*args, **kwargs)
         if is_new:
@@ -370,7 +405,17 @@ class DispatchLog(models.Model):
     shipped_kg = models.DecimalField(max_digits=10, decimal_places=2)
     delivery_order_no = models.CharField(max_length=50, blank=True)
 
+    def clean(self):
+        if float(self.shipped_kg) <= 0:
+            raise ValidationError({'shipped_kg': 'Shipped quantity must be greater than zero.'})
+            
+        if self.job_order_id:
+            remaining = float(self.job_order.total_packed_kg) - float(self.job_order.total_shipped_kg)
+            if self.pk is None and float(self.shipped_kg) > remaining:
+                raise ValidationError({'shipped_kg': f'Cannot dispatch {self.shipped_kg}kg. Only {remaining:.1f}kg is packed and ready for shipping.'})
+
     def save(self, *args, **kwargs):
+        self.clean()
         is_new = self.pk is None
         super().save(*args, **kwargs)
         if is_new:

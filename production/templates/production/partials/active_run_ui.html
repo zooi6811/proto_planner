@@ -32,8 +32,14 @@
             </div>
             <div>
                 <label class="input-label">Wastage (KG)</label>
-                <input type="number" name="wastage" step="0.01" min="0" value="0" class="text-mono">
+                <input type="number" name="wastage" step="0.01" min="0" placeholder="0" class="text-mono">
             </div>
+        </div>
+        <div style="padding: 10px; background-color: #f8f9fa; border-left: 4px solid #17a2b8; margin-bottom: 15px; border-radius: 4px;">
+            <strong style="color: #333;">Total Order Remaining:</strong> 
+            <span style="font-size: 1.1em; font-weight: bold; color: #17a2b8;">
+                {{ session.job_order.remaining_extrusion_kg|floatformat:1 }} kg
+            </span>
         </div>
         <button type="submit" class="btn btn-success" style="width: 100%; margin-top: 15px;">SUBMIT ROLL</button>
     </form>
