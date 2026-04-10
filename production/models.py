@@ -296,28 +296,32 @@ class ExtrusionSession(models.Model):
         total_reserved = sum(float(m.reserved_kg) for m in self.materials.all())
         
         with transaction.atomic():
-            if total_produced < total_reserved and total_reserved > 0:
-                # Pro-rata refund of unused reserved materials
-                refund_ratio = (total_reserved - total_produced) / total_reserved
-                
-                for sm in self.materials.all():
-                    refund_amount = float(sm.reserved_kg) * refund_ratio
-                    sm.actual_used_kg = Decimal(str(float(sm.reserved_kg) - refund_amount))
-                    sm.save()
+            # Stop any active sessions for this job
+            for session in self.extrusion_sessions.filter(status='ACTIVE'):
+                session.stop_session()
+            for allocation in self.allocations.all():
+                if total_produced < total_reserved and total_reserved > 0:
+                    # Pro-rata refund of unused reserved materials
+                    refund_ratio = (total_reserved - total_produced) / total_reserved
                     
-                    # Return unused material to the warehouse stock
-                    mat = RawMaterial.objects.select_for_update().get(pk=sm.material.pk)
-                    mat.current_stock_kg += Decimal(str(refund_amount))
-                    mat.save()
-            else:
-                # Output matched or exceeded reservation; all reserved material is considered 'used'
-                for sm in self.materials.all():
-                    sm.actual_used_kg = sm.reserved_kg
-                    sm.save()
+                    for sm in self.materials.all():
+                        refund_amount = float(sm.reserved_kg) * refund_ratio
+                        sm.actual_used_kg = Decimal(str(float(sm.reserved_kg) - refund_amount))
+                        sm.save()
+                        
+                        # Return unused material to the warehouse stock
+                        mat = RawMaterial.objects.select_for_update().get(pk=sm.material.pk)
+                        mat.current_stock_kg += Decimal(str(refund_amount))
+                        mat.save()
+                else:
+                    # Output matched or exceeded reservation; all reserved material is considered 'used'
+                    for sm in self.materials.all():
+                        sm.actual_used_kg = sm.reserved_kg
+                        sm.save()
 
-            self.status = 'COMPLETED'
-            self.end_time = timezone.now()
-            self.save(update_fields=['status', 'end_time'])
+                self.status = 'COMPLETED'
+                self.end_time = timezone.now()
+                self.save(update_fields=['status', 'end_time'])
 
     def __str__(self):
         return f"{self.machine_no} | {self.job_order.jo_number} ({self.status})"
@@ -349,16 +353,18 @@ class ExtrusionLog(models.Model):
         if is_new:
             # 1. Update the Session's running totals
             session = self.session
-            session.total_output_kg = float(session.total_output_kg) + float(self.roll_weight_kg)
-            session.total_wastage_kg = float(session.total_wastage_kg) + float(self.wastage_kg)
-            session.save(update_fields=['total_output_kg', 'total_wastage_kg'])
+            ExtrusionSession.objects.filter(pk=session.pk).update(
+                total_output_kg=F('total_output_kg') + self.roll_weight_kg,
+                total_wastage_kg=F('total_wastage_kg') + self.wastage_kg
+            )
 
-            # 2. Update the Master Job Order's progress
+            # 2. Update the Master Job Order
             JobOrder.objects.filter(pk=session.job_order.pk).update(
                 total_extruded_kg=F('total_extruded_kg') + self.roll_weight_kg
             )
             
-            # 3. Auto-stop if target is reached
+            # 3. Refresh from DB before checking auto-stop condition
+            session.refresh_from_db()
             if session.total_output_kg >= session.target_amount_kg:
                 session.stop_session()
 

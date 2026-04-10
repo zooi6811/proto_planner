@@ -84,9 +84,6 @@ def submit_material_usage(request):
             operator_name="Extrusion Op"
         )
         
-        material.current_stock_kg -= Decimal(str(amount_kg))
-        material.save()
-        
         allocation = MaterialAllocation.objects.filter(job_order=job_order, material=material).first()
         if allocation and allocation.is_overused:
             warning_msg = get_toast_popup(f"Material logged, but you have now exceeded the allocated formula limit for {material.name}!", "warning")
