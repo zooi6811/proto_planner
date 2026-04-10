@@ -101,7 +101,7 @@ class JobOrder(models.Model):
     wastage_buffer_percent = models.DecimalField(max_digits=5, decimal_places=2, default=10.00)
     order_quantity_kg = models.DecimalField(max_digits=10, decimal_places=2)
     total_est_material_kg = models.DecimalField(max_digits=10, decimal_places=2, editable=False, default=0)
-    
+    total_cutting_wastage_kg = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     total_extruded_kg = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     total_cut_kg = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     total_packed_kg = models.DecimalField(max_digits=10, decimal_places=2, default=0)
@@ -196,9 +196,11 @@ class JobOrder(models.Model):
     
     @property
     def remaining_extrusion_kg(self):
-        """Calculates how much of the original order is left to physically extrude."""
-        remaining = float(self.order_quantity_kg) - float(self.total_extruded_kg)
-        return max(0, remaining) # Prevents negative numbers if they slightly over-extrude
+        """Calculates how much of the original order is left to physically extrude, factoring in material lost to cutting waste."""
+        # Calculate the actual 'surviving' material that can be turned into the final product
+        usable_extruded = float(self.total_extruded_kg) - float(self.total_cutting_wastage_kg)
+        remaining = float(self.order_quantity_kg) - usable_extruded
+        return max(0, remaining)
 
     def __str__(self):
         return f"JO: {self.jo_number} - {self.customer}"

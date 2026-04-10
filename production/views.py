@@ -115,7 +115,12 @@ def load_machine_state(request, machine_no=None):
     if active_session:
         return render(request, 'production/partials/active_run_ui.html', {'session': active_session})
     else:
-        job_orders = JobOrder.objects.filter(is_completed=False, order_quantity_kg__gt=0).order_by('-id')[:20]
+        # Extrusion job list fallback uses the self-correcting logic
+        job_orders = JobOrder.objects.filter(
+            is_completed=False, 
+            order_quantity_kg__gt=F('total_extruded_kg') - F('total_cutting_wastage_kg')
+        ).order_by('-id')[:20]
+        
         categories = MaterialCategory.objects.all().order_by('name')
         initial_row_id = str(uuid.uuid4())[:8]
         
@@ -246,7 +251,10 @@ def submit_cutting(request):
         jo_id = request.POST.get('job_order')
         
         def reload_with_error(error_text):
-            jobs = JobOrder.objects.filter(total_extruded_kg__gt=F('total_cut_kg')).order_by('-id')[:20]
+            jobs = JobOrder.objects.filter(
+                is_completed=False, 
+                total_extruded_kg__gt=F('total_cut_kg') + F('total_cutting_wastage_kg')
+            ).order_by('-id')[:20]
             err_html = get_toast_popup(error_text)
             form_html = render(request, 'production/partials/cutting_form.html', {'job_orders': jobs, 'dept': 'cutting'}).content.decode('utf-8')
             return HttpResponse(err_html + form_html)
@@ -296,7 +304,10 @@ def submit_packing(request):
         jo_id = request.POST.get('job_order')
         
         def reload_with_error(error_text):
-            jobs = JobOrder.objects.filter(total_cut_kg__gt=F('total_packed_kg')).order_by('-id')[:20]
+            jobs = JobOrder.objects.filter(
+                is_completed=False, 
+                total_cut_kg__gt=F('total_packed_kg')
+            ).order_by('-id')[:20]
             err_html = get_toast_popup(error_text)
             form_html = render(request, 'production/partials/packing_form.html', {'job_orders': jobs, 'dept': 'packing'}).content.decode('utf-8')
             return HttpResponse(err_html + form_html)
@@ -341,30 +352,41 @@ def submit_packing(request):
 # HTMX FORM FETCHING & SEARCHING
 # -----------------------------------------------------------------------------
 def get_extrusion_form(request):
-    job_orders = JobOrder.objects.filter(total_extruded_kg__lt=F('order_quantity_kg')).order_by('-id')[:20]
+    # Appears if the order is incomplete AND the Net Usable Extruded is less than the required order quantity
+    job_orders = JobOrder.objects.filter(
+        is_completed=False, 
+        order_quantity_kg__gt=F('total_extruded_kg') - F('total_cutting_wastage_kg')
+    ).order_by('-id')[:20]
     return render(request, 'production/partials/extrusion_form.html', {'job_orders': job_orders})
 
 def get_cutting_form(request):
-    # Only show jobs where extruded material exists that HAS NOT yet been cut
-    job_orders = JobOrder.objects.filter(total_extruded_kg__gt=F('total_cut_kg')).order_by('-id')[:20]
+    # Appears if the order is incomplete AND there is uncut material waiting on the floor
+    job_orders = JobOrder.objects.filter(
+        is_completed=False,
+        total_extruded_kg__gt=F('total_cut_kg') + F('total_cutting_wastage_kg')
+    ).order_by('-id')[:20]
     return render(request, 'production/partials/cutting_form.html', {'job_orders': job_orders, 'dept': 'cutting'})
 
 def get_packing_form(request):
-    # Only show jobs where cut material exists that HAS NOT yet been packed
-    job_orders = JobOrder.objects.filter(total_cut_kg__gt=F('total_packed_kg')).order_by('-id')[:20]
+    # Appears if the order is incomplete AND there is cut material waiting to be packed
+    job_orders = JobOrder.objects.filter(
+        is_completed=False,
+        total_cut_kg__gt=F('total_packed_kg')
+    ).order_by('-id')[:20]
     return render(request, 'production/partials/packing_form.html', {'job_orders': job_orders, 'dept': 'packing'})
 
 def search_jobs(request):
     query = request.GET.get('q', '')
     dept = request.GET.get('dept', '') 
     
-    jobs = JobOrder.objects.filter(order_quantity_kg__gt=0)
+    # Global rule: Search only applies to incomplete, valid orders
+    jobs = JobOrder.objects.filter(is_completed=False, order_quantity_kg__gt=0)
     
-    # Apply the strict stage-completion filters to the search bar as well
+    # Apply the strict, self-correcting department filters
     if dept == 'extrusion':
-        jobs = jobs.filter(total_extruded_kg__lt=F('order_quantity_kg'))
+        jobs = jobs.filter(order_quantity_kg__gt=F('total_extruded_kg') - F('total_cutting_wastage_kg'))
     elif dept == 'cutting':
-        jobs = jobs.filter(total_extruded_kg__gt=F('total_cut_kg'))
+        jobs = jobs.filter(total_extruded_kg__gt=F('total_cut_kg') + F('total_cutting_wastage_kg'))
     elif dept == 'packing':
         jobs = jobs.filter(total_cut_kg__gt=F('total_packed_kg'))
         
@@ -402,11 +424,13 @@ def get_job_specs(request, jo_id):
         
     dept = request.GET.get('dept')
     
-    # If the frontend didn't explicitly specify a department, infer it dynamically
     if not dept:
-        if float(job_order.total_extruded_kg) < float(job_order.order_quantity_kg):
+        # Dynamically infer the stage using the Net Usable logic
+        usable_extruded = float(job_order.total_extruded_kg) - float(job_order.total_cutting_wastage_kg)
+        
+        if usable_extruded < float(job_order.order_quantity_kg):
             dept = 'extrusion'
-        elif float(job_order.total_cut_kg) < float(job_order.total_extruded_kg):
+        elif float(job_order.total_cut_kg) + float(job_order.total_cutting_wastage_kg) < float(job_order.total_extruded_kg):
             dept = 'cutting'
         else:
             dept = 'packing'
