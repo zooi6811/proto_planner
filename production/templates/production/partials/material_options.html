@@ -1,0 +1,6 @@
+<option value="" disabled selected>-- Select Material --</option>
+{% for mat in materials %}
+    <option value="{{ mat.id }}">{{ mat.material_id }} - {{ mat.name }}</option>
+{% empty %}
+    <option value="" disabled>No materials in this category</option>
+{% endfor %}

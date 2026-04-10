@@ -1,26 +1,22 @@
-<form hx-post="/start-session/" hx-target="#machine-workspace" style="width: 100%;">
+<form hx-post="/start-session/" hx-target="#machine-workspace" hx-include="#extrusion-shift-select" style="width: 100%;">
     {% csrf_token %}
     <input type="hidden" name="machine_no" value="{{ machine_no }}">
     
-    <div class="panel-header">
-        <h2 style="color: var(--action-blue);">Configure Run: Machine {{ machine_no }}</h2>
-        <select name="shift" required style="width: auto;">
-            <option value="AM">AM SHIFT</option>
-            <option value="PM">PM SHIFT</option>
-        </select>
+    <div class="panel-header" style="border-bottom: 2px solid var(--border-soft); padding-bottom: 15px; margin-bottom: 20px;">
+        <h2 style="color: var(--action-blue); margin: 0;">Configure Run: Machine {{ machine_no }}</h2>
     </div>
 
     <div style="display: grid; grid-template-columns: 1fr 1.5fr; gap: 30px;">
         
         <div style="border-right: 2px solid var(--border-soft); padding-right: 30px;">
-            <label class="input-label">Select Job Order</label>
+            <h3 style="margin-top: 0; color: var(--text-muted); font-size: 1rem; margin-bottom: 15px;">SELECT JOB ORDER</h3>
             <input type="text" name="q" placeholder="Search Pending Jobs..." 
                    hx-get="/search-jobs/?dept=extrusion" 
                    hx-target="#extrusion-jo-list" 
                    hx-trigger="keyup changed delay:300ms"
-                   style="margin-bottom: 15px;">
+                   style="width: 100%; border: 1px solid var(--border-hard); padding: 8px 12px; border-radius: 4px; margin-bottom: 15px;">
             
-            <div id="extrusion-jo-list">
+            <div id="extrusion-jo-list" style="max-height: 400px; overflow-y: auto; border-top: 1px dashed var(--border-soft); padding-top: 10px;">
                 {% include 'production/partials/job_radio_list.html' %}
             </div>
         </div>
@@ -30,27 +26,32 @@
             
             <div id="active-progress-bar" style="margin-bottom: 20px;"></div>
             
-            <div style="margin-bottom: 20px;">
-                <label class="input-label">Target Run Amount (KG)</label>
-                <input type="number" name="target_amount" required placeholder="0.00" class="text-mono" step="0.01">
-            </div>
-
-            <div style="background: var(--surface-alt); padding: 15px; border: 1px solid var(--border-soft); border-radius: var(--radius);">
-                <label class="input-label">Physical Material Reservation</label>
-                <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0;">Log exact raw material bags placed at the machine hopper.</p>
-                
-                {% for mat in raw_materials %}
-                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; border-bottom: 1px dashed var(--border-soft); padding-bottom: 5px;">
-                    <input type="hidden" name="material_ids" value="{{ mat.id }}">
-                    <span style="font-weight: 600; color: var(--text-primary);">{{ mat.material_id }} - {{ mat.name }}</span>
-                    <input type="number" name="reserved_amounts" placeholder="0" style="width: 120px; text-align: right;" step="0.01" min="0" class="text-mono">
+            <div style="background: var(--bg-floor); padding: 20px; border-radius: var(--radius); border: 1px solid var(--border-soft);">
+                <div style="margin-bottom: 20px;">
+                    <label class="input-label">Target Run Amount (KG)</label>
+                    <input type="number" name="target_amount" required placeholder="0" class="text-mono" step="0.01" style="width: 100%;">
                 </div>
-                {% endfor %}
+
+                <div style="background: var(--surface-alt); padding: 15px; border: 1px solid var(--border-soft); border-radius: var(--radius);">
+                    <label class="input-label">Physical Material Reservation</label>
+                    <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0;">Log exact raw material bags placed at the machine hopper.</p>
+                    
+                    <div id="material-reservation-list">
+                        {% include 'production/partials/material_row.html' with row_id=initial_row_id %}
+                    </div>
+                    
+                    <button type="button" class="btn" style="background-color: var(--action-blue); color: white; margin-top: 10px; font-size: 0.85rem; padding: 8px 15px;" 
+                            hx-get="/add-material-row/" 
+                            hx-target="#material-reservation-list" 
+                            hx-swap="beforeend">
+                        + ADD ANOTHER MATERIAL
+                    </button>
+                </div>
+                
+                <button type="submit" class="btn btn-success" style="width: 100%; margin-top: 20px; padding: 12px; font-weight: bold;">
+                    LOCK IN & START EXTRUSION
+                </button>
             </div>
-            
-            <button type="submit" class="btn btn-success" style="width: 100%; margin-top: 20px;">
-                LOCK IN & START EXTRUSION
-            </button>
         </div>
     </div>
 </form>

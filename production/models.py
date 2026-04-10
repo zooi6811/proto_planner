@@ -9,7 +9,18 @@ from django.core.exceptions import ValidationError
 # MASTER DATA & INVENTORY
 # -----------------------------------------------------------------------------
 
+class MaterialCategory(models.Model):
+    name = models.CharField(max_length=50, unique=True)
+    description = models.TextField(blank=True)
+
+    class Meta:
+        verbose_name_plural = "Material Categories"
+
+    def __str__(self):
+        return self.name
+
 class RawMaterial(models.Model):
+    category = models.ForeignKey(MaterialCategory, on_delete=models.SET_NULL, null=True, blank=True, related_name='materials')
     material_id = models.CharField(max_length=50, unique=True)
     name = models.CharField(max_length=100)
     current_stock_kg = models.DecimalField(max_digits=10, decimal_places=2, default=0)

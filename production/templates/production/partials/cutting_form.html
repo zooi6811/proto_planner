@@ -1,60 +1,115 @@
 <div class="panel">
-    <div class="panel-header">
-        <h2>Cutting & Slitting Log</h2>
+    <div class="panel-header" style="border-bottom: 2px solid var(--border-soft); padding-bottom: 15px; margin-bottom: 20px;">
+        <h2 style="margin: 0;">Cutting & Slitting Log</h2>
     </div>
     
     <form hx-post="/submit-cutting/" hx-target="#feedback-container" hx-disabled-elt="#cutting-submit-btn">
         {% csrf_token %}
-        <div style="display: grid; grid-template-columns: 1fr 1.5fr; gap: 30px;">
-            
-            <div style="border-right: 2px solid var(--border-soft); padding-right: 30px;">
-                <label class="input-label">Select Active Job</label>
-                <input type="text" name="q" placeholder="Search JO or Customer..." 
-                       hx-get="/search-jobs/?dept=cutting" 
-                       hx-target="#cutting-jo-list" 
-                       hx-trigger="keyup changed delay:300ms"
-                       style="margin-bottom: 15px; width: 100%;">
-                
-                <div id="cutting-jo-list">
-                    {% include 'production/partials/job_radio_list.html' %}
+        
+        <div style="background: var(--surface-alt); border: 2px solid var(--action-blue); border-radius: var(--radius); padding: 20px; margin-bottom: 20px;">
+            <h3 style="margin-top: 0; color: var(--action-blue); font-size: 1rem; margin-bottom: 15px;">STEP 1: TERMINAL SETUP</h3>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                <div>
+                    <label class="input-label">Machine No</label>
+                    <select id="cutting-machine-select" name="machine" required style="width: 100%; font-weight: bold; border-color: var(--action-blue);">
+                        <option value="" disabled selected>-- Select Machine --</option>
+                        <option value="C1">C1</option>
+                        <option value="C2">C2</option>
+                        <option value="C3">C3</option>
+                        <option value="C4">C4</option>
+                        <option value="C5">C5</option>
+                        <option value="C6">C6</option>
+                        <option value="C7">C7</option>
+                    </select>
                 </div>
-            </div>
-
-            <div>
-                <div id="job-specs-container">
-                    <div style="padding: 20px; border: 2px dashed var(--border-soft); border-radius: var(--radius); text-align: center; color: var(--text-muted); margin-bottom: 20px; font-weight: bold;">
-                        Select a Job Order to view technical specifications.
-                    </div>
+                <div>
+                    <label class="input-label">Shift</label>
+                    <select id="cutting-shift-select" name="shift" required style="width: 100%; font-weight: bold; border-color: var(--action-blue);">
+                        <option value="" disabled selected>-- Select Shift --</option>
+                        <option value="AM">AM SHIFT</option>
+                        <option value="PM">PM SHIFT</option>
+                    </select>
                 </div>
-
-                <div id="active-progress-bar" style="margin-bottom: 20px;"></div>
-
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
-                    <div>
-                        <label class="input-label">Machine No</label>
-                        <input type="text" name="machine" placeholder="e.g. CUT-01" required style="width: 100%;">
-                    </div>
-                    <div>
-                        <label class="input-label">Shift</label>
-                        <select name="shift" required style="width: 100%;">
-                            <option value="AM">AM SHIFT</option>
-                            <option value="PM">PM SHIFT</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label class="input-label">Output (KG)</label>
-                        <input type="number" name="output_kg" step="0.01" min="0.01" required class="text-mono" style="width: 100%;">
-                    </div>
-                    <div>
-                        <label class="input-label">Wastage (KG)</label>
-                        <input type="number" name="wastage" step="0.01" min="0" placeholder="0" class="text-mono" style="width: 100%;">
-                    </div>
-                </div>
-                
-                <button id="cutting-submit-btn" type="submit" class="btn btn-primary" style="margin-top: 20px; width: 100%; padding: 12px; font-weight: bold;">SUBMIT</button>
-                
-                <div id="feedback-container" style="margin-top: 20px;"></div>
             </div>
         </div>
+
+        <div id="cutting-waiting-state" style="background: var(--surface-alt); border: 2px dashed var(--border-soft); border-radius: var(--radius); padding: 40px 20px; text-align: center; margin-bottom: 20px;">
+            <div style="font-size: 2.5rem; margin-bottom: 15px; opacity: 0.5;">⚙️</div>
+            <p style="color: var(--text-muted); font-weight: bold; text-transform: uppercase; margin: 0; font-size: 1.1rem;">Awaiting Terminal Setup</p>
+            <p style="font-size: 0.9rem; color: var(--border-hard); margin-top: 8px;">Please select your Machine and Shift above to unlock the job workspace.</p>
+        </div>
+
+        <div id="cutting-workspace" style="display: none;">
+            <div style="display: grid; grid-template-columns: 1fr 1.5fr; gap: 30px;">
+                
+                <div style="border-right: 2px solid var(--border-soft); padding-right: 30px;">
+                    <h3 style="margin-top: 0; color: var(--text-muted); font-size: 1rem; margin-bottom: 15px;">STEP 2: SELECT JOB</h3>
+                    <input type="text" name="q" placeholder="Search JO or Customer..." 
+                           hx-get="/search-jobs/?dept=cutting" 
+                           hx-target="#cutting-jo-list" 
+                           hx-trigger="keyup changed delay:300ms"
+                           style="width: 100%; border: 1px solid var(--border-hard); padding: 8px 12px; border-radius: 4px; margin-bottom: 15px;">
+                    
+                    <div id="cutting-jo-list" style="max-height: 450px; overflow-y: auto; border-top: 1px dashed var(--border-soft); padding-top: 10px;">
+                        {% include 'production/partials/job_radio_list.html' %}
+                    </div>
+                </div>
+
+                <div>
+                    <div id="job-specs-container">
+                        <div style="padding: 40px 20px; text-align: center; color: var(--text-muted); border: 2px dashed var(--border-soft); border-radius: var(--radius); margin-bottom: 20px;">
+                            <div style="font-size: 2.5rem; margin-bottom: 15px; opacity: 0.5;">✂️</div>
+                            <p style="font-weight: bold; text-transform: uppercase; margin: 0; font-size: 1.1rem;">Awaiting Job Selection</p>
+                            <p style="font-size: 0.9rem; color: var(--border-hard); margin-top: 8px;">Select a job order from the list to view specs and log production.</p>
+                        </div>
+                    </div>
+
+                    <div id="active-progress-bar" style="margin-bottom: 20px;"></div>
+
+                    <div style="background: var(--bg-floor); padding: 20px; border-radius: var(--radius); border: 1px solid var(--border-soft);">
+                        <h3 style="margin-top: 0; margin-bottom: 15px; font-size: 1rem; color: var(--text-muted);">STEP 3: LOG PRODUCTION</h3>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                            <div>
+                                <label class="input-label">Good Output (KG)</label>
+                                <input type="number" name="output_kg" step="0.01" min="0.01" required class="text-mono" placeholder="0" style="width: 100%;">
+                            </div>
+                            <div>
+                                <label class="input-label">Wastage (KG)</label>
+                                <input type="number" name="wastage" step="0.01" min="0" placeholder="0" class="text-mono" style="width: 100%;">
+                            </div>
+                        </div>
+                        
+                        <button id="cutting-submit-btn" type="submit" class="btn btn-primary" style="margin-top: 20px; width: 100%; padding: 12px; font-weight: bold;">SUBMIT CUTTING LOG</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div id="feedback-container" style="margin-top: 20px;"></div>
     </form>
 </div>
+
+<script>
+    (function() {
+        var machineSelect = document.getElementById('cutting-machine-select');
+        var shiftSelect = document.getElementById('cutting-shift-select');
+        var workspace = document.getElementById('cutting-workspace');
+        var waitingState = document.getElementById('cutting-waiting-state');
+
+        function checkSetup() {
+            if (machineSelect.value && shiftSelect.value) {
+                waitingState.style.display = 'none';
+                workspace.style.display = 'block';
+            } else {
+                waitingState.style.display = 'block';
+                workspace.style.display = 'none';
+            }
+        }
+
+        if (machineSelect && shiftSelect) {
+            machineSelect.addEventListener('change', checkSetup);
+            shiftSelect.addEventListener('change', checkSetup);
+            checkSetup(); // Run immediately for pre-filled forms
+        }
+    })();
+</script>

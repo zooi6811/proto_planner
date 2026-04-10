@@ -4,8 +4,9 @@ from .models import JobOrder, ExtrusionLog, CuttingLog, PackingLog, RawMaterial
 from django.db.models import F, Q
 from django.db import transaction
 from decimal import Decimal
-from .models import MaterialUsageLog, MaterialAllocation
+from .models import MaterialUsageLog, MaterialAllocation, MaterialCategory
 import time
+import uuid
 
 def get_toast_popup(message, alert_type="error"):
     """Generates a self-removing floating banner for various alert types."""
@@ -37,6 +38,19 @@ def get_toast_popup(message, alert_type="error"):
 # -----------------------------------------------------------------------------
 # MATERIAL USAGE SUBMISSION
 # -----------------------------------------------------------------------------
+
+def add_material_row(request):
+    """Returns a fresh, empty material reservation row with a unique ID."""
+    row_id = str(uuid.uuid4())[:8]
+    categories = MaterialCategory.objects.all().order_by('name')
+    return render(request, 'production/partials/material_row.html', {'row_id': row_id, 'categories': categories})
+
+def get_materials_by_category(request):
+    """Cascading dropdown fetcher."""
+    cat_id = request.GET.get('category_id')
+    materials = RawMaterial.objects.filter(category_id=cat_id).order_by('name')
+    return render(request, 'production/partials/material_options.html', {'materials': materials})
+
 def submit_material_usage(request):
     """Submits ad-hoc material usage, triggering relevant visual alerts."""
     if request.method == "POST":
@@ -90,28 +104,26 @@ from .models import ExtrusionSession, SessionMaterial # Ensure these are importe
 # STATEFUL EXTRUSION SESSIONS
 # -----------------------------------------------------------------------------
 def load_machine_state(request, machine_no=None):
-    """Checks if a machine is currently running a job or is idle."""
-    
-    # 1. If it wasn't called internally with an argument, grab it from the HTMX GET request
     if not machine_no:
         machine_no = request.GET.get('machine_no')
         
-    # 2. If it is still empty (e.g., they selected the default "-- Select --" option)
     if not machine_no:
         return HttpResponse("<p style='color: var(--text-muted); font-weight: bold; text-transform: uppercase;'>Awaiting Machine Selection...</p>")
 
-    # 3. Proceed with the original logic
     active_session = ExtrusionSession.objects.filter(machine_no=machine_no, status='ACTIVE').first()
     
     if active_session:
         return render(request, 'production/partials/active_run_ui.html', {'session': active_session})
     else:
         job_orders = JobOrder.objects.filter(is_completed=False, order_quantity_kg__gt=0).order_by('-id')[:20]
-        raw_materials = RawMaterial.objects.all()
+        categories = MaterialCategory.objects.all().order_by('name')
+        initial_row_id = str(uuid.uuid4())[:8]
+        
         return render(request, 'production/partials/start_session_ui.html', {
             'machine_no': machine_no, 
             'job_orders': job_orders,
-            'raw_materials': raw_materials
+            'categories': categories,
+            'initial_row_id': initial_row_id
         })
     
 def start_extrusion_session(request):
@@ -151,8 +163,12 @@ def start_extrusion_session(request):
                 job_order=job_order, machine_no=machine_no, shift=shift, target_amount_kg=target_amount
             )
             
+            material_ids = request.POST.getlist('material_ids')
+            reserved_amounts = request.POST.getlist('reserved_amounts')
+            
             for mat_id, amount in zip(material_ids, reserved_amounts):
-                if amount.strip() and float(amount) > 0:
+                # Ensure they actually selected a material and entered a positive amount
+                if mat_id and amount.strip() and float(amount) > 0:
                     mat = RawMaterial.objects.select_for_update().get(id=mat_id)
                     
                     if float(amount) > float(mat.current_stock_kg):

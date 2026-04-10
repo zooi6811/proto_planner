@@ -1,6 +1,6 @@
 from django.contrib import admin
 from .models import (
-    RawMaterial, Recipe, RecipeItem, JobOrder, 
+    RawMaterial, Recipe, RecipeItem, JobOrder, MaterialCategory,
     ExtrusionLog, CuttingLog, PackingLog, 
     MaterialAllocation, MaterialUsageLog, DispatchLog, ExtrusionSession, SessionMaterial, MaterialRestockLog
 )
@@ -30,6 +30,7 @@ class MaterialRestockLogInline(admin.TabularInline):
     readonly_fields = ('arrival_date',)
 
 # --- ADMIN CLASSES ---
+
 class RecipeAdmin(admin.ModelAdmin):
     inlines = [RecipeItemInline]
     list_display = ('formula_code', 'description')
@@ -40,13 +41,15 @@ class JobOrderAdmin(admin.ModelAdmin):
     list_filter = ('is_completed',)
 
 class RawMaterialAdmin(admin.ModelAdmin):
-    list_display = ('material_id', 'name', 'current_stock_kg', 'reorder_point_kg')
+    list_display = ('material_id', 'name', 'category', 'current_stock_kg', 'reorder_point_kg')
+    list_filter = ('category',)
     inlines = [MaterialRestockLogInline]
 
 admin.site.register(RawMaterial, RawMaterialAdmin)
 admin.site.register(Recipe, RecipeAdmin)
 admin.site.register(JobOrder, JobOrderAdmin)
 
+admin.site.register(MaterialCategory)
 admin.site.register(ExtrusionLog)
 admin.site.register(CuttingLog)
 admin.site.register(PackingLog)

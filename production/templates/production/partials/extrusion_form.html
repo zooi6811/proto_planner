@@ -1,29 +1,81 @@
 <div class="panel">
-    <div class="panel-header">
-        <h2>Extrusion Department</h2>
+    <div class="panel-header" style="border-bottom: 2px solid var(--border-soft); padding-bottom: 15px; margin-bottom: 20px;">
+        <h2 style="margin: 0;">Extrusion Department</h2>
     </div>
     
-    <div style="display: grid; grid-template-columns: 1fr 2fr; gap: 20px;">
-        <div>
-            <label class="input-label">Machine Number</label>
-            <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0;">Select a machine to view its current state or initialise a new run.</p>
-            
-            <select name="machine_no" hx-get="/load-machine-state/" hx-target="#machine-workspace" hx-trigger="change">
-                <option value="" disabled selected>-- Select Machine --</option>
-                <option value="B1">B1</option>
-                <option value="B2">B2</option>
-                <option value="B3">B3</option>
-                <option value="B4">B4</option>
-                <option value="B5">B5</option>
-                <option value="B6">B6</option>
-                <option value="B7">B7</option>
-                <option value="B8">B8</option>
-                <option value="B9">B9</option>
-            </select>
-        </div>
-
-        <div id="machine-workspace" style="background: var(--surface-alt); border: 2px dashed var(--border-soft); border-radius: var(--radius); padding: 20px; display: flex; align-items: center; justify-content: center;">
-            <p style="color: var(--text-muted); font-weight: bold; text-transform: uppercase;">Awaiting Machine Selection...</p>
+    <div style="background: var(--surface-alt); border: 2px solid var(--action-blue); border-radius: var(--radius); padding: 20px; margin-bottom: 20px;">
+        <h3 style="margin-top: 0; color: var(--action-blue); font-size: 1rem; margin-bottom: 15px;">STEP 1: TERMINAL SETUP</h3>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+            <div>
+                <label class="input-label">Machine No</label>
+                <select id="extrusion-machine-select" name="machine_no" required style="width: 100%; font-weight: bold; border-color: var(--action-blue);">
+                    <option value="" disabled selected>-- Select Machine --</option>
+                    <option value="B1">B1</option>
+                    <option value="B2">B2</option>
+                    <option value="B3">B3</option>
+                    <option value="B4">B4</option>
+                    <option value="B5">B5</option>
+                    <option value="B6">B6</option>
+                    <option value="B7">B7</option>
+                    <option value="B8">B8</option>
+                    <option value="B9">B9</option>
+                </select>
+            </div>
+            <div>
+                <label class="input-label">Shift</label>
+                <select id="extrusion-shift-select" name="shift" required style="width: 100%; font-weight: bold; border-color: var(--action-blue);">
+                    <option value="" disabled selected>-- Select Shift --</option>
+                    <option value="AM">AM SHIFT</option>
+                    <option value="PM">PM SHIFT</option>
+                </select>
+            </div>
         </div>
     </div>
+
+    <div id="extrusion-waiting-state" style="background: var(--surface-alt); border: 2px dashed var(--border-soft); border-radius: var(--radius); padding: 40px 20px; text-align: center; margin-bottom: 20px;">
+        <div style="font-size: 2.5rem; margin-bottom: 15px; opacity: 0.5;">🏭</div>
+        <p style="color: var(--text-muted); font-weight: bold; text-transform: uppercase; margin: 0; font-size: 1.1rem;">Awaiting Terminal Setup</p>
+        <p style="font-size: 0.9rem; color: var(--border-hard); margin-top: 8px;">Please select your Machine and Shift above to connect to the terminal.</p>
+    </div>
+
+    <div id="extrusion-workspace" style="display: none;">
+        
+        <button id="trigger-machine-load" 
+                hx-get="/load-machine-state/" 
+                hx-target="#machine-workspace" 
+                hx-include="#extrusion-machine-select" 
+                style="display: none;"></button>
+        
+        <div id="machine-workspace"></div>
+    </div>
 </div>
+
+<script>
+    (function() {
+        var machineSelect = document.getElementById('extrusion-machine-select');
+        var shiftSelect = document.getElementById('extrusion-shift-select');
+        var workspace = document.getElementById('extrusion-workspace');
+        var waitingState = document.getElementById('extrusion-waiting-state');
+        var triggerBtn = document.getElementById('trigger-machine-load');
+
+        function checkSetup() {
+            if (machineSelect.value && shiftSelect.value) {
+                // Unlock UI
+                waitingState.style.display = 'none';
+                workspace.style.display = 'block';
+                // Automatically fetch the machine dashboard from the backend
+                triggerBtn.click(); 
+            } else {
+                // Lock UI
+                waitingState.style.display = 'block';
+                workspace.style.display = 'none';
+            }
+        }
+
+        if (machineSelect && shiftSelect) {
+            machineSelect.addEventListener('change', checkSetup);
+            shiftSelect.addEventListener('change', checkSetup);
+            checkSetup(); // Initial run in case of browser refresh
+        }
+    })();
+</script>

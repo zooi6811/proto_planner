@@ -24,4 +24,7 @@ urlpatterns = [
     # Utilities (Search & Digital Spec Sheets)
     path('get-job-specs/<int:jo_id>/', views.get_job_specs, name='get_job_specs'),
     path('search-jobs/', views.search_jobs, name='search_jobs'),
+
+    path('add-material-row/', views.add_material_row, name='add_material_row'),
+    path('get-materials-by-category/', views.get_materials_by_category, name='get_materials_by_category'),
 ]
