@@ -33,7 +33,7 @@ class MaterialRestockLog(models.Model):
     """Logs incoming shipments of raw materials and automatically updates inventory."""
     material = models.ForeignKey(RawMaterial, on_delete=models.CASCADE, related_name='restocks')
     arrival_date = models.DateTimeField(auto_now_add=True)
-    amount_kg = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0.01)])
+    amount_kg = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(Decimal('0.01'))])
     
     # Optional tracking fields
     supplier = models.CharField(max_length=100, blank=True, default="-")
@@ -48,7 +48,7 @@ class MaterialRestockLog(models.Model):
         if is_new:
             with transaction.atomic():
                 mat = RawMaterial.objects.select_for_update().get(pk=self.material.pk)
-                mat.current_stock_kg += Decimal(str(self.amount_kg))
+                mat.current_stock_kg += self.amount_kg
                 mat.save()
 
     def __str__(self):
@@ -67,7 +67,7 @@ class RecipeItem(models.Model):
     ratio = models.DecimalField(max_digits=5, decimal_places=4)
 
     def clean(self):
-        if self.ratio <= 0 or self.ratio > 1:
+        if self.ratio <= Decimal('0') or self.ratio > Decimal('1'):
             raise ValidationError({'ratio': 'Ratio must be strictly between 0 and 1 (0% to 100%).'})
 
     def save(self, *args, **kwargs):
@@ -75,7 +75,7 @@ class RecipeItem(models.Model):
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"{self.recipe.formula_code} -> {self.material.name} ({self.ratio * 100}%)"
+        return f"{self.recipe.formula_code} -> {self.material.name} ({self.ratio * Decimal('100')}%)"
 
 # -----------------------------------------------------------------------------
 # JOB ORDER MANAGEMENT
@@ -113,10 +113,10 @@ class JobOrder(models.Model):
     def save(self, *args, **kwargs):
         is_new = self.pk is None
         
-        # Calculate Estimated Total Material Required based on wastage buffer
+        # Calculate Estimated Total Material Required based on wastage buffer using Decimals
         if self.order_quantity_kg:
-            buffer_multiplier = 1 + (float(self.wastage_buffer_percent) / 100)
-            self.total_est_material_kg = float(self.order_quantity_kg) * float(buffer_multiplier)
+            buffer_multiplier = Decimal('1.00') + (self.wastage_buffer_percent / Decimal('100.00'))
+            self.total_est_material_kg = self.order_quantity_kg * buffer_multiplier
             
         super().save(*args, **kwargs)
         
@@ -124,27 +124,22 @@ class JobOrder(models.Model):
         if is_new and self.recipe:
             with transaction.atomic():
                 for recipe_item in self.recipe.ingredients.all():
-                    # Lock the material row to prevent concurrent booking conflicts
                     material = RawMaterial.objects.select_for_update().get(pk=recipe_item.material.pk)
-                    
-                    # Calculate exact KG needed for this specific ingredient
-                    required_amount = Decimal(str(self.total_est_material_kg * float(recipe_item.ratio)))
+                    required_amount = self.total_est_material_kg * recipe_item.ratio
                     
                     allocated_amount = Decimal('0.00')
                     shortfall_amount = Decimal('0.00')
 
-                    # Check against physical warehouse stock
                     if material.current_stock_kg >= required_amount:
                         allocated_amount = required_amount
                         material.current_stock_kg -= required_amount
                     else:
                         allocated_amount = material.current_stock_kg
                         shortfall_amount = required_amount - material.current_stock_kg
-                        material.current_stock_kg = Decimal('0.00') # Drain remaining stock
+                        material.current_stock_kg = Decimal('0.00') 
                     
                     material.save()
 
-                    # Generate the Digital Allocation Ticket
                     MaterialAllocation.objects.create(
                         job_order=self,
                         material=material,
@@ -154,24 +149,19 @@ class JobOrder(models.Model):
                     )
 
     def complete_job(self):
-        """
-        To be called by the Admin when closing a job. 
-        Refunds any allocated material that was NOT actually used.
-        """
+        """Refunds any allocated material that was NOT actually used upon completion."""
         if self.is_completed:
             return 
             
         with transaction.atomic():
             for allocation in self.allocations.all():
-                unused_kg = float(allocation.allocated_kg) - float(allocation.actual_used_kg)
+                unused_kg = allocation.allocated_kg - allocation.actual_used_kg
                 
-                # If they used less than allocated, refund the remainder to warehouse
-                if unused_kg > 0:
+                if unused_kg > Decimal('0'):
                     material = RawMaterial.objects.select_for_update().get(pk=allocation.material.pk)
-                    material.current_stock_kg += Decimal(str(unused_kg))
+                    material.current_stock_kg += unused_kg
                     material.save()
                     
-                    # Zero out the remaining allocation so the ledger balances
                     allocation.allocated_kg = allocation.actual_used_kg
                     allocation.save()
             
@@ -180,27 +170,23 @@ class JobOrder(models.Model):
 
     @property
     def extrusion_progress(self):
-        if self.order_quantity_kg > 0:
-            return round((float(self.total_extruded_kg) / float(self.order_quantity_kg)) * 100, 1)
-        return 0
+        if self.order_quantity_kg > Decimal('0'):
+            return round((self.total_extruded_kg / self.order_quantity_kg) * Decimal('100'), 1)
+        return Decimal('0')
 
     @property
     def order_balance_kg(self):
-        # How much is left to produce and ship to fulfil the customer's request
-        return float(self.order_quantity_kg) - float(self.total_shipped_kg)
+        return self.order_quantity_kg - self.total_shipped_kg
 
     @property
     def ready_to_ship_kg(self):
-        # Goods packed and waiting in the warehouse
-        return float(self.total_packed_kg) - float(self.total_shipped_kg)
+        return self.total_packed_kg - self.total_shipped_kg
     
     @property
     def remaining_extrusion_kg(self):
-        """Calculates how much of the original order is left to physically extrude, factoring in material lost to cutting waste."""
-        # Calculate the actual 'surviving' material that can be turned into the final product
-        usable_extruded = float(self.total_extruded_kg) - float(self.total_cutting_wastage_kg)
-        remaining = float(self.order_quantity_kg) - usable_extruded
-        return max(0, remaining)
+        usable_extruded = self.total_extruded_kg - self.total_cutting_wastage_kg
+        remaining = self.order_quantity_kg - usable_extruded
+        return max(Decimal('0'), remaining)
 
     def __str__(self):
         return f"JO: {self.jo_number} - {self.customer}"
@@ -220,8 +206,7 @@ class MaterialAllocation(models.Model):
 
     @property
     def is_overused(self):
-        # Warn if actual usage exceeds the required amount + a 2% leeway
-        return float(self.actual_used_kg) > (float(self.required_kg) * 1.02)
+        return self.actual_used_kg > (self.required_kg * Decimal('1.02'))
 
     def __str__(self):
         return f"{self.job_order.jo_number} - {self.material.name} (Shortfall: {self.shortfall_kg} KG)"
@@ -229,9 +214,9 @@ class MaterialAllocation(models.Model):
 class MaterialUsageLog(models.Model):
     job_order = models.ForeignKey(JobOrder, on_delete=models.CASCADE, related_name='usage_logs')
     material = models.ForeignKey(RawMaterial, on_delete=models.CASCADE)
-    amount_kg = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0.01)])
+    amount_kg = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(Decimal('0.01'))])
     timestamp = models.DateTimeField(auto_now_add=True)
-    operator_name = models.CharField(max_length=50)
+    operator_name = models.CharField(max_length=50, null=True, blank=True)
     
     is_substitution = models.BooleanField(default=False) 
 
@@ -245,23 +230,28 @@ class MaterialUsageLog(models.Model):
                     job_order=self.job_order,
                     material=self.material,
                     defaults={
-                        'required_kg': 0, 'allocated_kg': 0, 'shortfall_kg': 0, 'actual_used_kg': 0
+                        'required_kg': Decimal('0'), 'allocated_kg': Decimal('0'), 
+                        'shortfall_kg': Decimal('0'), 'actual_used_kg': Decimal('0')
                     }
                 )
 
-                # Identify if this is an Ad-Hoc Substitution
-                if created or allocation.required_kg == 0:
+                if created or allocation.required_kg == Decimal('0'):
                     self.is_substitution = True
                     super().save(update_fields=['is_substitution'])
                     
                     live_material = RawMaterial.objects.select_for_update().get(pk=self.material.pk)
-                    live_material.current_stock_kg -= Decimal(str(self.amount_kg))
+                    live_material.current_stock_kg -= self.amount_kg
                     live_material.save()
-                    
-                    if live_material.current_stock_kg <= live_material.reorder_point_kg:
-                        print(f"⚠️ ADMIN ALERT: {live_material.name} stock has dropped due to an unexpected substitution!")
+                else:
+                    # Deduct from warehouse stock ONLY if usage exceeds the previously allocated amount
+                    if (allocation.actual_used_kg + self.amount_kg) > allocation.allocated_kg:
+                        overage = min(self.amount_kg, (allocation.actual_used_kg + self.amount_kg) - allocation.allocated_kg)
+                        if overage > Decimal('0'):
+                            live_material = RawMaterial.objects.select_for_update().get(pk=self.material.pk)
+                            live_material.current_stock_kg -= overage
+                            live_material.save()
 
-                allocation.actual_used_kg = float(allocation.actual_used_kg) + float(self.amount_kg)
+                allocation.actual_used_kg += self.amount_kg
                 allocation.save()
 
 # -----------------------------------------------------------------------------
@@ -269,80 +259,67 @@ class MaterialUsageLog(models.Model):
 # -----------------------------------------------------------------------------
 
 class ExtrusionSession(models.Model):
-    """Represents an active run on a specific machine by an operator."""
     job_order = models.ForeignKey(JobOrder, on_delete=models.CASCADE, related_name='extrusion_sessions')
     machine_no = models.CharField(max_length=10)
     shift = models.CharField(max_length=10, choices=[('AM', 'Morning'), ('PM', 'Night')])
-    operator_name = models.CharField(max_length=50, default="Extrusion Op")
+    operator_name = models.CharField(max_length=50, null=True, blank=True)
     
-    # Session Targets
     target_amount_kg = models.DecimalField(max_digits=10, decimal_places=2)
     status = models.CharField(max_length=20, default='ACTIVE', choices=[('ACTIVE', 'Active'), ('COMPLETED', 'Completed')])
     
-    # Time Tracking
     start_time = models.DateTimeField(auto_now_add=True)
     end_time = models.DateTimeField(null=True, blank=True)
     
-    # Live Running Totals for this specific session
     total_output_kg = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     total_wastage_kg = models.DecimalField(max_digits=10, decimal_places=2, default=0)
 
     def stop_session(self):
-        """Calculates actual material used vs output, and refunds the remainder to the warehouse."""
+        """Calculates actual material used vs output for THIS specific session and refunds remainder."""
         if self.status != 'ACTIVE':
             return
             
-        total_produced = float(self.total_output_kg) + float(self.total_wastage_kg)
-        total_reserved = sum(float(m.reserved_kg) for m in self.materials.all())
+        total_produced = self.total_output_kg + self.total_wastage_kg
+        total_reserved = sum(sm.reserved_kg for sm in self.materials.all())
         
         with transaction.atomic():
-            # Stop any active sessions for this job
-            for session in self.extrusion_sessions.filter(status='ACTIVE'):
-                session.stop_session()
-            for allocation in self.allocations.all():
-                if total_produced < total_reserved and total_reserved > 0:
-                    # Pro-rata refund of unused reserved materials
-                    refund_ratio = (total_reserved - total_produced) / total_reserved
+            self.status = 'COMPLETED'
+            self.end_time = timezone.now()
+            self.save(update_fields=['status', 'end_time'])
+            
+            if total_produced < total_reserved and total_reserved > Decimal('0'):
+                refund_ratio = (total_reserved - total_produced) / total_reserved
+                
+                for sm in self.materials.all():
+                    refund_amount = sm.reserved_kg * refund_ratio
+                    sm.actual_used_kg = sm.reserved_kg - refund_amount
+                    sm.save()
                     
-                    for sm in self.materials.all():
-                        refund_amount = float(sm.reserved_kg) * refund_ratio
-                        sm.actual_used_kg = Decimal(str(float(sm.reserved_kg) - refund_amount))
-                        sm.save()
-                        
-                        # Return unused material to the warehouse stock
-                        mat = RawMaterial.objects.select_for_update().get(pk=sm.material.pk)
-                        mat.current_stock_kg += Decimal(str(refund_amount))
-                        mat.save()
-                else:
-                    # Output matched or exceeded reservation; all reserved material is considered 'used'
-                    for sm in self.materials.all():
-                        sm.actual_used_kg = sm.reserved_kg
-                        sm.save()
-
-                self.status = 'COMPLETED'
-                self.end_time = timezone.now()
-                self.save(update_fields=['status', 'end_time'])
+                    mat = RawMaterial.objects.select_for_update().get(pk=sm.material.pk)
+                    mat.current_stock_kg += refund_amount
+                    mat.save()
+            else:
+                for sm in self.materials.all():
+                    sm.actual_used_kg = sm.reserved_kg
+                    sm.save()
 
     def __str__(self):
         return f"{self.machine_no} | {self.job_order.jo_number} ({self.status})"
 
 class SessionMaterial(models.Model):
-    """The specific materials the operator reserved for this active session."""
     session = models.ForeignKey(ExtrusionSession, on_delete=models.CASCADE, related_name='materials')
     material = models.ForeignKey(RawMaterial, on_delete=models.CASCADE)
     reserved_kg = models.DecimalField(max_digits=10, decimal_places=2)
     actual_used_kg = models.DecimalField(max_digits=10, decimal_places=2, default=0)
 
 class ExtrusionLog(models.Model):
-    """Individual rolls produced during an active session."""
     session = models.ForeignKey(ExtrusionSession, on_delete=models.CASCADE, related_name='rolls')
     timestamp = models.DateTimeField(auto_now_add=True)
     
-    roll_weight_kg = models.DecimalField(max_digits=8, decimal_places=2, validators=[MinValueValidator(0.01)])
-    wastage_kg = models.DecimalField(max_digits=8, decimal_places=2, default=0, validators=[MinValueValidator(0)])
+    roll_weight_kg = models.DecimalField(max_digits=8, decimal_places=2, validators=[MinValueValidator(Decimal('0.01'))])
+    wastage_kg = models.DecimalField(max_digits=8, decimal_places=2, default=0, validators=[MinValueValidator(Decimal('0'))])
 
     def clean(self):
-        if float(self.wastage_kg) < 0 or float(self.wastage_kg) > float(self.roll_weight_kg):
+        if self.wastage_kg < Decimal('0') or self.wastage_kg > self.roll_weight_kg:
             raise ValidationError({'wastage_kg': 'Wastage cannot be negative or greater than the total roll weight.'})
 
     def save(self, *args, **kwargs):
@@ -351,19 +328,16 @@ class ExtrusionLog(models.Model):
         super().save(*args, **kwargs)
 
         if is_new:
-            # 1. Update the Session's running totals
             session = self.session
             ExtrusionSession.objects.filter(pk=session.pk).update(
                 total_output_kg=F('total_output_kg') + self.roll_weight_kg,
                 total_wastage_kg=F('total_wastage_kg') + self.wastage_kg
             )
 
-            # 2. Update the Master Job Order
             JobOrder.objects.filter(pk=session.job_order.pk).update(
                 total_extruded_kg=F('total_extruded_kg') + self.roll_weight_kg
             )
             
-            # 3. Refresh from DB before checking auto-stop condition
             session.refresh_from_db()
             if session.total_output_kg >= session.target_amount_kg:
                 session.stop_session()
@@ -373,15 +347,15 @@ class CuttingLog(models.Model):
     machine_no = models.CharField(max_length=10)
     shift = models.CharField(max_length=10, choices=[('AM', 'Morning'), ('PM', 'Night')])
     timestamp = models.DateTimeField(auto_now_add=True)
-    operator_name = models.CharField(max_length=50)
+    operator_name = models.CharField(max_length=50, null=True, blank=True)
     
-    output_kg = models.DecimalField(max_digits=8, decimal_places=2, validators=[MinValueValidator(0.01)])
-    wastage_kg = models.DecimalField(max_digits=8, decimal_places=2, default=0, validators=[MinValueValidator(0)])
+    output_kg = models.DecimalField(max_digits=8, decimal_places=2, validators=[MinValueValidator(Decimal('0.01'))])
+    wastage_kg = models.DecimalField(max_digits=8, decimal_places=2, default=0, validators=[MinValueValidator(Decimal('0'))])
 
     def clean(self):
         if self.job_order_id:
-            remaining = float(self.job_order.total_extruded_kg) - float(self.job_order.total_cut_kg)
-            if self.pk is None and float(self.output_kg) > (remaining * 1.05):
+            remaining = self.job_order.total_extruded_kg - self.job_order.total_cut_kg
+            if self.pk is None and self.output_kg > (remaining * Decimal('1.05')):
                 raise ValidationError({'output_kg': f'Cannot cut {self.output_kg}kg. Only {remaining:.1f}kg remains from Extrusion.'})
 
     def save(self, *args, **kwargs):
@@ -390,22 +364,23 @@ class CuttingLog(models.Model):
         super().save(*args, **kwargs)
         if is_new:
             JobOrder.objects.filter(pk=self.job_order.pk).update(
-                total_cut_kg=F('total_cut_kg') + self.output_kg
+                total_cut_kg=F('total_cut_kg') + self.output_kg,
+                total_cutting_wastage_kg=F('total_cutting_wastage_kg') + self.wastage_kg
             )
 
 class PackingLog(models.Model):
     job_order = models.ForeignKey(JobOrder, on_delete=models.CASCADE, related_name='packing_logs')
     timestamp = models.DateTimeField(auto_now_add=True)
-    operator_name = models.CharField(max_length=50)
+    operator_name = models.CharField(max_length=50, null=True, blank=True)
     
-    packing_size_kg = models.DecimalField(max_digits=6, decimal_places=2, validators=[MinValueValidator(0.01)], help_text="KG per Bag/Pallet")
+    packing_size_kg = models.DecimalField(max_digits=6, decimal_places=2, validators=[MinValueValidator(Decimal('0.01'))], help_text="KG per Bag/Pallet")
     quantity_packed = models.IntegerField(validators=[MinValueValidator(1)], help_text="Number of Bags/Pallets")
 
     def clean(self):
         if self.job_order_id:
-            remaining = float(self.job_order.total_cut_kg) - float(self.job_order.total_packed_kg)
-            total_weight = float(self.packing_size_kg) * float(self.quantity_packed)
-            if self.pk is None and total_weight > (remaining * 1.05):
+            remaining = self.job_order.total_cut_kg - self.job_order.total_packed_kg
+            total_weight = self.packing_size_kg * Decimal(str(self.quantity_packed))
+            if self.pk is None and total_weight > (remaining * Decimal('1.05')):
                 raise ValidationError({'quantity_packed': f'Attempting to pack {total_weight:.1f}kg, but only {remaining:.1f}kg has been cut and is available.'})
 
     def save(self, *args, **kwargs):
@@ -413,7 +388,7 @@ class PackingLog(models.Model):
         is_new = self.pk is None
         super().save(*args, **kwargs)
         if is_new:
-            total_weight = float(self.packing_size_kg) * float(self.quantity_packed)
+            total_weight = self.packing_size_kg * Decimal(str(self.quantity_packed))
             JobOrder.objects.filter(pk=self.job_order.pk).update(
                 total_packed_kg=F('total_packed_kg') + total_weight
             )
@@ -425,12 +400,12 @@ class DispatchLog(models.Model):
     delivery_order_no = models.CharField(max_length=50, blank=True)
 
     def clean(self):
-        if float(self.shipped_kg) <= 0:
+        if self.shipped_kg <= Decimal('0'):
             raise ValidationError({'shipped_kg': 'Shipped quantity must be greater than zero.'})
             
         if self.job_order_id:
-            remaining = float(self.job_order.total_packed_kg) - float(self.job_order.total_shipped_kg)
-            if self.pk is None and float(self.shipped_kg) > remaining:
+            remaining = self.job_order.total_packed_kg - self.job_order.total_shipped_kg
+            if self.pk is None and self.shipped_kg > remaining:
                 raise ValidationError({'shipped_kg': f'Cannot dispatch {self.shipped_kg}kg. Only {remaining:.1f}kg is packed and ready for shipping.'})
 
     def save(self, *args, **kwargs):

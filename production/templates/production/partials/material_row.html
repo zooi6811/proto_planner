@@ -1,27 +1,36 @@
-<div class="material-row" id="row-{{ row_id }}" style="display: grid; grid-template-columns: 1fr 1fr 120px auto; gap: 10px; margin-bottom: 10px; align-items: end; border-bottom: 1px dashed var(--border-soft); padding-bottom: 10px;">
+<div class="material-row" id="row-{{ row_id }}" style="display: grid; grid-template-columns: 1.5fr 2fr 1fr auto; gap: 10px; align-items: end; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px dashed var(--border-soft);">
+    
     <div>
         <label class="input-label" style="font-size: 0.8rem;">Category</label>
-        <select name="category_id" 
-                hx-get="/get-materials-by-category/" 
-                hx-target="#mat-select-{{ row_id }}" 
-                style="width: 100%; border-color: var(--border-hard);">
-            <option value="" disabled selected>Select Category...</option>
+        <select name="category_{{ row_id }}" 
+                class="form-control"
+                hx-get="{% url 'get_materials_by_category' %}" 
+                hx-target="#material-select-{{ row_id }}"
+                hx-trigger="change"
+                style="width: 100%;">
+            <option value="" selected disabled>-- Select Category --</option>
             {% for cat in categories %}
                 <option value="{{ cat.id }}">{{ cat.name }}</option>
             {% endfor %}
         </select>
     </div>
+
     <div>
         <label class="input-label" style="font-size: 0.8rem;">Material</label>
-        <select name="material_ids" id="mat-select-{{ row_id }}" style="width: 100%; border-color: var(--border-hard);">
-            <option value="" disabled selected>Material Name</option>
-        </select>
+        <select name="material_ids" id="material-select-{{ row_id }}" class="form-control" required style="width: 100%;">
+            <option value="" selected disabled>-- Awaiting Category --</option>
+            </select>
     </div>
+
     <div>
-        <label class="input-label" style="font-size: 0.8rem;">Amount (KG)</label>
-        <input type="number" name="reserved_amounts" placeholder="0" style="width: 100%; text-align: right;" step="0.01" min="0" class="text-mono">
+        <label class="input-label" style="font-size: 0.8rem;">Reserve (KG)</label>
+        <input type="number" name="reserved_amounts" step="0.01" min="0.01" required class="text-mono form-control" placeholder="0.00" style="width: 100%;">
     </div>
+
     <div>
-        <button type="button" class="btn" style="background-color: var(--status-red); color: white; padding: 8px 12px;" onclick="document.getElementById('row-{{ row_id }}').remove();" title="Remove Row">X</button>
+        <button type="button" class="btn" style="background-color: transparent; color: var(--status-red); border: 1px solid var(--status-red); padding: 8px 12px;"
+                onclick="document.getElementById('row-{{ row_id }}').remove();">
+            ✕
+        </button>
     </div>
 </div>

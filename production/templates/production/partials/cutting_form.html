@@ -12,22 +12,22 @@
                 <div>
                     <label class="input-label">Machine No</label>
                     <select id="cutting-machine-select" name="machine" required style="width: 100%; font-weight: bold; border-color: var(--action-blue);">
-                        <option value="" disabled selected>-- Select Machine --</option>
-                        <option value="C1">C1</option>
-                        <option value="C2">C2</option>
-                        <option value="C3">C3</option>
-                        <option value="C4">C4</option>
-                        <option value="C5">C5</option>
-                        <option value="C6">C6</option>
-                        <option value="C7">C7</option>
+                        <option value="" disabled {% if not request.POST.machine %}selected{% endif %}>-- Select Machine --</option>
+                        <option value="C1" {% if request.POST.machine == "C1" %}selected{% endif %}>C1</option>
+                        <option value="C2" {% if request.POST.machine == "C2" %}selected{% endif %}>C2</option>
+                        <option value="C3" {% if request.POST.machine == "C3" %}selected{% endif %}>C3</option>
+                        <option value="C4" {% if request.POST.machine == "C4" %}selected{% endif %}>C4</option>
+                        <option value="C5" {% if request.POST.machine == "C5" %}selected{% endif %}>C5</option>
+                        <option value="C6" {% if request.POST.machine == "C6" %}selected{% endif %}>C6</option>
+                        <option value="C7" {% if request.POST.machine == "C7" %}selected{% endif %}>C7</option>
                     </select>
                 </div>
                 <div>
                     <label class="input-label">Shift</label>
                     <select id="cutting-shift-select" name="shift" required style="width: 100%; font-weight: bold; border-color: var(--action-blue);">
-                        <option value="" disabled selected>-- Select Shift --</option>
-                        <option value="AM">AM SHIFT</option>
-                        <option value="PM">PM SHIFT</option>
+                        <option value="" disabled {% if not request.POST.shift %}selected{% endif %}>-- Select Shift --</option>
+                        <option value="AM" {% if request.POST.shift == "AM" %}selected{% endif %}>AM SHIFT</option>
+                        <option value="PM" {% if request.POST.shift == "PM" %}selected{% endif %}>PM SHIFT</option>
                     </select>
                 </div>
             </div>
@@ -71,11 +71,11 @@
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
                             <div>
                                 <label class="input-label">Good Output (KG)</label>
-                                <input type="number" name="output_kg" step="0.01" min="0.01" required class="text-mono" placeholder="0" style="width: 100%;">
+                                <input type="number" name="output_kg" step="0.01" min="0.01" required class="text-mono" placeholder="0" style="width: 100%;" value="{{ request.POST.output_kg|default:'' }}">
                             </div>
                             <div>
                                 <label class="input-label">Wastage (KG)</label>
-                                <input type="number" name="wastage" step="0.01" min="0" placeholder="0" class="text-mono" style="width: 100%;">
+                                <input type="number" name="wastage" step="0.01" min="0" placeholder="0" class="text-mono" style="width: 100%;" value="{{ request.POST.wastage|default:'' }}">
                             </div>
                         </div>
                         

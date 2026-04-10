@@ -1,4 +1,4 @@
-<form hx-post="/start-session/" hx-target="#machine-workspace" hx-include="#extrusion-shift-select" style="width: 100%;">
+<form hx-post="{% url 'start_session' %}" hx-target="#feedback-container" hx-include="#extrusion-shift-select" hx-disabled-elt="find button[type='submit']" style="width: 100%;">
     {% csrf_token %}
     <input type="hidden" name="machine_no" value="{{ machine_no }}">
     
@@ -11,7 +11,7 @@
         <div style="border-right: 2px solid var(--border-soft); padding-right: 30px;">
             <h3 style="margin-top: 0; color: var(--text-muted); font-size: 1rem; margin-bottom: 15px;">SELECT JOB ORDER</h3>
             <input type="text" name="q" placeholder="Search Pending Jobs..." 
-                   hx-get="/search-jobs/?dept=extrusion" 
+                   hx-get="{% url 'search_jobs' %}?dept=extrusion" 
                    hx-target="#extrusion-jo-list" 
                    hx-trigger="keyup changed delay:300ms"
                    style="width: 100%; border: 1px solid var(--border-hard); padding: 8px 12px; border-radius: 4px; margin-bottom: 15px;">
@@ -23,35 +23,102 @@
 
         <div>
             <div id="job-specs-container"></div>
-            
             <div id="active-progress-bar" style="margin-bottom: 20px;"></div>
             
             <div style="background: var(--bg-floor); padding: 20px; border-radius: var(--radius); border: 1px solid var(--border-soft);">
                 <div style="margin-bottom: 20px;">
                     <label class="input-label">Target Run Amount (KG)</label>
-                    <input type="number" name="target_amount" required placeholder="0" class="text-mono" step="0.01" style="width: 100%;">
+                    <input type="number" name="target_amount" required placeholder="0" class="text-mono" step="0.01" style="width: 100%;" value="{{ request.POST.target_amount|default:'' }}">
                 </div>
 
                 <div style="background: var(--surface-alt); padding: 15px; border: 1px solid var(--border-soft); border-radius: var(--radius);">
                     <label class="input-label">Physical Material Reservation</label>
                     <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0;">Log exact raw material bags placed at the machine hopper.</p>
                     
-                    <div id="material-reservation-list">
-                        {% include 'production/partials/material_row.html' with row_id=initial_row_id %}
-                    </div>
+                    <div id="material-reservation-list"></div>
                     
-                    <button type="button" class="btn" style="background-color: var(--action-blue); color: white; margin-top: 10px; font-size: 0.85rem; padding: 8px 15px;" 
-                            hx-get="/add-material-row/" 
-                            hx-target="#material-reservation-list" 
-                            hx-swap="beforeend">
+                    <button type="button" onclick="addMaterialRow()" class="btn" style="background-color: var(--action-blue); color: white; margin-top: 10px; font-size: 0.85rem; padding: 8px 15px;">
                         + ADD ANOTHER MATERIAL
                     </button>
                 </div>
                 
                 <button type="submit" class="btn btn-success" style="width: 100%; margin-top: 20px; padding: 12px; font-weight: bold;">
-                    LOCK IN & START EXTRUSION
+                    START EXTRUSION
                 </button>
+                <div id="feedback-container" style="margin-top: 15px;"></div>
             </div>
         </div>
     </div>
 </form>
+
+<template id="material-row-template">
+    <div class="material-row" style="display: grid; grid-template-columns: 1.5fr 2fr 1fr auto; gap: 10px; align-items: end; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px dashed var(--border-soft);">
+        <div>
+            <label class="input-label" style="font-size: 0.8rem;">Category</label>
+            <select class="form-control category-select" onchange="populateMaterials(this)" style="width: 100%;">
+                <option value="" selected disabled>-- Select Category --</option>
+                {% for cat in categories %}
+                    <option value="{{ cat.id }}">{{ cat.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div>
+            <label class="input-label" style="font-size: 0.8rem;">Material</label>
+            <select name="material_ids" class="form-control material-select" required style="width: 100%;">
+                <option value="" selected disabled>-- Awaiting Category --</option>
+            </select>
+        </div>
+
+        <div>
+            <label class="input-label" style="font-size: 0.8rem;">Reserve (KG)</label>
+            <input type="number" name="reserved_amounts" step="0.01" min="0.01" required class="text-mono form-control" placeholder="0.00" style="width: 100%;">
+        </div>
+
+        <div>
+            <button type="button" class="btn" style="background-color: transparent; color: var(--status-red); border: 1px solid var(--status-red); padding: 8px 12px;" onclick="this.closest('.material-row').remove();">✕</button>
+        </div>
+    </div>
+</template>
+
+<script>
+    // Pre-load all factory materials into a local JS dictionary
+    const materialData = {
+        {% for cat in categories %}
+        "{{ cat.id }}": [
+            {% for mat in cat.materials.all %}
+            { id: "{{ mat.id }}", name: "{{ mat.name|escapejs }}", stock: "{{ mat.current_stock_kg }}" },
+            {% endfor %}
+        ]{% if not forloop.last %},{% endif %}
+        {% endfor %}
+    };
+
+    function addMaterialRow() {
+        const template = document.getElementById('material-row-template');
+        const clone = template.content.cloneNode(true);
+        document.getElementById('material-reservation-list').appendChild(clone);
+    }
+
+    function populateMaterials(categoryDropdown) {
+        // Find the specific material dropdown next to the category that was just changed
+        const row = categoryDropdown.closest('.material-row');
+        const materialDropdown = row.querySelector('.material-select');
+        const categoryId = categoryDropdown.value;
+
+        // Reset the dropdown
+        materialDropdown.innerHTML = '<option value="" selected disabled>-- Select Material --</option>';
+
+        // Inject the materials for the chosen category
+        if (materialData[categoryId]) {
+            materialData[categoryId].forEach(mat => {
+                const option = document.createElement('option');
+                option.value = mat.id;
+                option.textContent = `${mat.name} (${mat.stock}kg in stock)`;
+                materialDropdown.appendChild(option);
+            });
+        }
+    }
+
+    // Automatically spawn the first empty row when the UI loads
+    addMaterialRow();
+</script>

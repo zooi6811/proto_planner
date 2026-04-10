@@ -15,10 +15,8 @@
 <div style="max-height: 400px; overflow-y: auto; padding-right: 10px;">
     {% for jo in job_orders %}
     <div>
-        <input type="radio" name="job_order" value="{{ jo.id }}" id="jo_{{ jo.id }}" class="radio-btn" required
-               hx-get="/get-job-specs/{{ jo.id }}/?dept={{ dept }}" 
-               hx-target="#job-specs-container"
-               hx-trigger="change">
+        <input type="radio" name="job_order" value="{{ jo.id }}" id="jo_{{ jo.id }}" 
+               class="radio-btn spec-trigger" data-dept="{{ dept }}" required>
         
         <label for="jo_{{ jo.id }}" class="radio-label">
             <div style="font-weight: bold; font-size: 1.1rem; color: var(--text-primary);">{{ jo.jo_number }}</div>
@@ -34,3 +32,28 @@
     </div>
     {% endfor %}
 </div>
+
+<script>
+    // Ensure we only attach this listener once, even if HTMX swaps the list
+    if (!window.specListenerAttached) {
+        document.addEventListener('change', function(e) {
+            // Event delegation catches dynamically loaded radio buttons
+            if (e.target && e.target.classList.contains('spec-trigger')) {
+                const joId = e.target.value;
+                const dept = e.target.dataset.dept || '';
+
+                // Standard fetch bypasses all HTMX form inheritance traps
+                fetch(`/get-job-specs/${joId}/?dept=${dept}`)
+                    .then(response => response.text())
+                    .then(html => {
+                        const container = document.getElementById('job-specs-container');
+                        if (container) {
+                            container.innerHTML = html;
+                        }
+                    })
+                    .catch(err => console.error('Failed to load specs:', err));
+            }
+        });
+        window.specListenerAttached = true;
+    }
+</script>

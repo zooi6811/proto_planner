@@ -1,46 +1,53 @@
 <div class="panel">
-    <div class="panel-header">
-        <h2>Packing & Dispatch Log</h2>
+    <div class="panel-header" style="border-bottom: 2px solid var(--border-soft); padding-bottom: 15px; margin-bottom: 20px;">
+        <h2 style="margin: 0; color: var(--text-primary);">Packing & Dispatch Log</h2>
     </div>
     
-    <form hx-post="/submit-packing/" hx-target="#feedback-container" hx-disabled-elt="#packing-submit-btn">
+    <form hx-post="{% url 'submit_packing' %}" hx-target="#feedback-container" hx-disabled-elt="#packing-submit-btn">
         {% csrf_token %}
         <div style="display: grid; grid-template-columns: 1fr 1.5fr; gap: 30px;">
             
             <div style="border-right: 2px solid var(--border-soft); padding-right: 30px;">
-                <label class="input-label">Select Active Job</label>
+                <h3 style="margin-top: 0; color: var(--text-muted); font-size: 1rem; margin-bottom: 15px;">STEP 1: SELECT JOB</h3>
+                
                 <input type="text" name="q" placeholder="Search JO or Customer..." 
-                       hx-get="/search-jobs/?dept=packing" 
+                       hx-get="{% url 'search_jobs' %}?dept=packing" 
                        hx-target="#packing-jo-list" 
                        hx-trigger="keyup changed delay:300ms"
-                       style="margin-bottom: 15px; width: 100%;">
+                       hx-params="q"
+                       style="width: 100%; border: 1px solid var(--border-hard); padding: 8px 12px; border-radius: 4px; margin-bottom: 15px;">
                 
-                <div id="packing-jo-list">
+                <div id="packing-jo-list" style="max-height: 450px; overflow-y: auto; border-top: 1px dashed var(--border-soft); padding-top: 10px;">
                     {% include 'production/partials/job_radio_list.html' %}
                 </div>
             </div>
 
             <div>
                 <div id="job-specs-container">
-                    <div style="padding: 20px; border: 2px dashed var(--border-soft); border-radius: var(--radius); text-align: center; color: var(--text-muted); margin-bottom: 20px; font-weight: bold;">
-                        Select a Job Order to view technical specifications.
+                    <div style="padding: 40px 20px; text-align: center; color: var(--text-muted); border: 2px dashed var(--border-soft); border-radius: var(--radius); margin-bottom: 20px;">
+                        <div style="font-size: 2.5rem; margin-bottom: 15px; opacity: 0.5;">📦</div>
+                        <p style="font-weight: bold; text-transform: uppercase; margin: 0; font-size: 1.1rem;">Awaiting Job Selection</p>
+                        <p style="font-size: 0.9rem; color: var(--border-hard); margin-top: 8px;">Select a job order from the list to view specs and log packing.</p>
                     </div>
                 </div>
 
                 <div id="active-progress-bar" style="margin-bottom: 20px;"></div>
 
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
-                    <div>
-                        <label class="input-label">Packing Size (KG per unit)</label>
-                        <input type="number" name="packing_size" step="0.01" min="0.01" required class="text-mono" style="width: 100%;">
+                <div style="background: var(--bg-floor); padding: 20px; border-radius: var(--radius); border: 1px solid var(--border-soft);">
+                    <h3 style="margin-top: 0; margin-bottom: 15px; font-size: 1rem; color: var(--text-muted);">STEP 2: LOG PACKING</h3>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                        <div>
+                            <label class="input-label">Packing Size (KG per unit)</label>
+                            <input type="number" name="packing_size" step="0.01" min="0.01" required class="text-mono" placeholder="0.00" style="width: 100%;" value="{{ request.POST.packing_size|default:'' }}">
+                        </div>
+                        <div>
+                            <label class="input-label">Quantity (Bags/Boxes)</label>
+                            <input type="number" name="quantity" step="1" min="1" required class="text-mono" placeholder="0" style="width: 100%;" value="{{ request.POST.quantity|default:'' }}">
+                        </div>
                     </div>
-                    <div>
-                        <label class="input-label">Quantity (Bags/Boxes)</label>
-                        <input type="number" name="quantity" step="1" min="1" required class="text-mono" style="width: 100%;">
-                    </div>
+                    
+                    <button id="packing-submit-btn" type="submit" class="btn btn-primary" style="margin-top: 20px; width: 100%; padding: 12px; font-weight: bold;">SUBMIT PACKING LOG</button>
                 </div>
-                
-                <button id="packing-submit-btn" type="submit" class="btn btn-primary" style="margin-top: 20px; width: 100%; padding: 12px; font-weight: bold;">SUBMIT</button>
                 
                 <div id="feedback-container" style="margin-top: 20px;"></div>
             </div>

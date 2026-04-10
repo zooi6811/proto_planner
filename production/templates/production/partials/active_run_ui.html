@@ -20,7 +20,7 @@
         </div>
     </div>
 
-    <form hx-post="/log-session-roll/" hx-target="#machine-workspace" style="background: var(--bg-floor); padding: 15px; border-radius: var(--radius); margin-bottom: 20px;">
+    <form hx-post="/log-session-roll/" hx-target="#feedback-container" hx-disabled-elt="find button[type='submit']" style="background: var(--bg-floor); padding: 15px; border-radius: var(--radius); margin-bottom: 20px;">
         {% csrf_token %}
         <input type="hidden" name="session_id" value="{{ session.id }}">
         <h3 style="margin-bottom: 15px; font-size: 1rem; color: var(--text-muted);">LOG NEW ROLL</h3>
@@ -28,11 +28,11 @@
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
             <div>
                 <label class="input-label">Roll Weight (KG)</label>
-                <input type="number" name="roll_weight" step="0.01" min="0.01" required class="text-mono">
+                <input type="number" name="roll_weight" step="0.01" min="0.01" required class="text-mono" value="{{ request.POST.roll_weight|default:'' }}">
             </div>
             <div>
                 <label class="input-label">Wastage (KG)</label>
-                <input type="number" name="wastage" step="0.01" min="0" placeholder="0" class="text-mono">
+                <input type="number" name="wastage" step="0.01" min="0" placeholder="0" class="text-mono" value="{{ request.POST.wastage|default:'' }}">
             </div>
         </div>
         <div style="padding: 10px; background-color: #f8f9fa; border-left: 4px solid #17a2b8; margin-bottom: 15px; border-radius: 4px;">
@@ -44,8 +44,14 @@
         <button type="submit" class="btn btn-success" style="width: 100%; margin-top: 15px;">SUBMIT ROLL</button>
     </form>
 
-    <div style="text-align: right;">
-        <button hx-post="/stop-session/{{ session.id }}/" hx-target="#machine-workspace" class="btn" style="background-color: var(--status-red); color: white; font-size: 0.9rem; padding: 10px 15px;">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div id="feedback-container" style="flex-grow: 1; margin-right: 20px;"></div>
+        
+        <button hx-post="{% url 'stop_session' session.id %}" 
+                hx-target="#feedback-container" 
+                hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+                hx-disabled-elt="this"
+                class="btn" style="background-color: var(--status-red); color: white; font-size: 0.9rem; padding: 10px 15px;">
             TERMINATE SESSION EARLY
         </button>
     </div>

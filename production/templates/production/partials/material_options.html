@@ -1,6 +1,6 @@
-<option value="" disabled selected>-- Select Material --</option>
+<option value="" selected disabled>-- Select Specific Material --</option>
 {% for mat in materials %}
-    <option value="{{ mat.id }}">{{ mat.material_id }} - {{ mat.name }}</option>
+    <option value="{{ mat.id }}">{{ mat.name }} ({{ mat.current_stock_kg }}kg in stock)</option>
 {% empty %}
     <option value="" disabled>No materials in this category</option>
 {% endfor %}

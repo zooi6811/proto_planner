@@ -1,16 +1,27 @@
 from django.shortcuts import render, get_object_or_404
 from django.http import HttpResponse
-from .models import JobOrder, ExtrusionLog, CuttingLog, PackingLog, RawMaterial
 from django.db.models import F, Q
 from django.db import transaction
-from decimal import Decimal
-from .models import MaterialUsageLog, MaterialAllocation, MaterialCategory
+from django.core.exceptions import ValidationError
+from django.utils.html import escape
+from decimal import Decimal, InvalidOperation
+from .models import (
+    JobOrder, ExtrusionLog, CuttingLog, PackingLog, RawMaterial, 
+    MaterialUsageLog, MaterialAllocation, MaterialCategory, 
+    ExtrusionSession, SessionMaterial
+)
 import time
 import uuid
 
-def get_toast_popup(message, alert_type="error"):
-    """Generates a self-removing floating banner for various alert types."""
-    toast_id = f"toast-{int(time.time() * 1000)}"
+from django.utils.html import escape
+
+def get_toast_popup(message, alert_type="error", use_oob=True):
+    """
+    Generates a floating banner using pure CSS animations.
+    When use_oob=False, it swaps perfectly into standard targets (like #feedback-container)
+    which natively overwrites old toasts and permanently prevents stacking bugs.
+    """
+    safe_message = escape(str(message))
     
     # Configure colours and icons dynamically
     themes = {
@@ -20,20 +31,31 @@ def get_toast_popup(message, alert_type="error"):
     }
     theme = themes.get(alert_type, themes["error"])
 
+    oob_attr = 'hx-swap-oob="beforeend:body"' if use_oob else ''
+
+    # Using pure CSS keyframes guarantees it fades away without relying on JS execution
     return f"""
-    <div id="{toast_id}" style="position: fixed; top: 20px; right: 20px; z-index: 9999; padding: 15px 25px; background-color: {theme['bg']}; color: {theme['text']}; border-radius: 4px; font-size: 15px; font-weight: bold; box-shadow: 0 4px 10px rgba(0,0,0,0.3); transition: opacity 0.5s ease-out; pointer-events: none;">
-        {theme['icon']} {message}
-        <script>
-            setTimeout(function() {{
-                var banner = document.getElementById('{toast_id}');
-                if (banner) {{
-                    banner.style.opacity = '0';
-                    setTimeout(function() {{ banner.remove(); }}, 500);
-                }}
-            }}, 4000);
-        </script>
+    <div {oob_attr} style="position: fixed; top: 20px; right: 20px; z-index: 9999; padding: 15px 25px; background-color: {theme['bg']}; color: {theme['text']}; border-radius: 4px; font-size: 15px; font-weight: bold; box-shadow: 0 4px 10px rgba(0,0,0,0.3); animation: toastFadeOut 4s forwards; pointer-events: none;">
+        {theme['icon']} {safe_message}
+        <style>
+            @keyframes toastFadeOut {{
+                0% {{ opacity: 0; transform: translateY(-10px); }}
+                10% {{ opacity: 1; transform: translateY(0); }}
+                80% {{ opacity: 1; transform: translateY(0); }}
+                100% {{ opacity: 0; transform: translateY(-10px); pointer-events: none; }}
+            }}
+        </style>
     </div>
     """
+
+def parse_decimal(value):
+    """Safely coerces form inputs into precise Decimals, bypassing TypeError crashes."""
+    if value is None or str(value).strip() == '':
+        return None
+    try:
+        return Decimal(str(value).strip())
+    except (InvalidOperation, ValueError, TypeError):
+        return None
 
 # -----------------------------------------------------------------------------
 # MATERIAL USAGE SUBMISSION
@@ -41,15 +63,41 @@ def get_toast_popup(message, alert_type="error"):
 
 def add_material_row(request):
     """Returns a fresh, empty material reservation row with a unique ID."""
-    row_id = str(uuid.uuid4())[:8]
-    categories = MaterialCategory.objects.all().order_by('name')
-    return render(request, 'production/partials/material_row.html', {'row_id': row_id, 'categories': categories})
-
+    try:
+        row_id = str(uuid.uuid4())[:8]
+        categories = MaterialCategory.objects.all().order_by('name')
+        return render(request, 'production/partials/material_row.html', {'row_id': row_id, 'categories': categories})
+    except Exception as e:
+        # If the backend crashes, render the error visually so we aren't guessing
+        return HttpResponse(f'<div style="color:var(--status-red); padding:10px; border:1px solid red;">Backend Error: {str(e)}</div>')
+    
 def get_materials_by_category(request):
-    """Cascading dropdown fetcher."""
-    cat_id = request.GET.get('category_id')
-    materials = RawMaterial.objects.filter(category_id=cat_id).order_by('name')
-    return render(request, 'production/partials/material_options.html', {'materials': materials})
+    """Cascading dropdown fetcher completely immune to HTMX list serialization traps."""
+    try:
+        cat_id = None
+        
+        # Smart extraction: Find the exact dynamic key triggering the request
+        # (e.g., ignoring everything else and hunting only for 'category_ABC123')
+        for key, value in request.GET.items():
+            if key.startswith('category_'):
+                cat_id = value
+                break
+                
+        # Fallback for standard requests
+        if not cat_id:
+            cat_id = request.GET.get('category_id')
+
+        if not cat_id or str(cat_id).strip() == '':
+            return HttpResponse('<option value="" selected disabled>-- Awaiting Category --</option>')
+
+        # Pre-validate as integer to prevent ORM ValidationErrors
+        clean_id = int(str(cat_id).strip())
+        materials = RawMaterial.objects.filter(category_id=clean_id).order_by('name')
+        return render(request, 'production/partials/material_options.html', {'materials': materials})
+
+    except (ValueError, TypeError, Exception):
+        # Catches rogue data payloads gracefully
+        return HttpResponse('<option value="" selected disabled>-- Selection Error --</option>')
 
 def submit_material_usage(request):
     """Submits ad-hoc material usage, triggering relevant visual alerts."""
@@ -60,13 +108,9 @@ def submit_material_usage(request):
         if not jo_id or not material_id:
             return HttpResponse(get_toast_popup("Please select both a Job Order and a Material.", "error"))
 
-        try:
-            amount_kg = float(request.POST.get('amount_kg'))
-        except ValueError:
-            return HttpResponse(get_toast_popup("Invalid amount. Please enter numbers only.", "error"))
-
-        if amount_kg <= 0:
-            return HttpResponse(get_toast_popup("Amount must be greater than zero.", "error"))
+        amount_kg = parse_decimal(request.POST.get('amount_kg'))
+        if amount_kg is None or amount_kg <= Decimal('0'):
+            return HttpResponse(get_toast_popup("Invalid amount. Please enter positive numbers only.", "error"))
 
         material = get_object_or_404(RawMaterial, id=material_id)
         job_order = get_object_or_404(JobOrder, id=jo_id)
@@ -74,14 +118,17 @@ def submit_material_usage(request):
         if job_order.is_completed:
             return HttpResponse(get_toast_popup("This Job Order is already closed or completed. You cannot log new data against it.", "error"))
 
-        if amount_kg > float(material.current_stock_kg):
+        if amount_kg > material.current_stock_kg:
             return HttpResponse(get_toast_popup(f"Insufficient stock. You requested {amount_kg}kg, but only {material.current_stock_kg}kg of {material.name} is available.", "error"))
+
+        # Accurately trace the logged-in user rather than hardcoding "Extrusion Op"
+        operator = request.user.username if request.user.is_authenticated else "Unknown Operator"
 
         usage_log = MaterialUsageLog.objects.create(
             job_order=job_order,
             material=material,
             amount_kg=amount_kg,
-            operator_name="Extrusion Op"
+            operator_name=operator
         )
         
         allocation = MaterialAllocation.objects.filter(job_order=job_order, material=material).first()
@@ -91,11 +138,10 @@ def submit_material_usage(request):
             
         success_msg = get_toast_popup(f"Successfully logged {amount_kg}kg of {material.name}.", "success")
         return HttpResponse(success_msg)
+
 def operator_dashboard(request):
     job_orders = JobOrder.objects.all()
     return render(request, 'production/dashboard.html', {'job_orders': job_orders})
-
-from .models import ExtrusionSession, SessionMaterial # Ensure these are imported
 
 # -----------------------------------------------------------------------------
 # STATEFUL EXTRUSION SESSIONS
@@ -112,7 +158,6 @@ def load_machine_state(request, machine_no=None):
     if active_session:
         return render(request, 'production/partials/active_run_ui.html', {'session': active_session})
     else:
-        # Extrusion job list fallback uses the self-correcting logic
         job_orders = JobOrder.objects.filter(
             is_completed=False, 
             order_quantity_kg__gt=F('total_extruded_kg') - F('total_cutting_wastage_kg')
@@ -135,110 +180,131 @@ def start_extrusion_session(request):
         machine_no = request.POST.get('machine_no')
         shift = request.POST.get('shift')
         
-        try:
-            target_amount = float(request.POST.get('target_amount'))
-        except ValueError:
-            error_msg = get_toast_popup("Invalid target amount. Please check your numbers.")
-            return HttpResponse(error_msg + load_machine_state(request, machine_no).content.decode('utf-8'))
+        def reload_with_error(msg):
+            # THE FIX: use_oob=False safely overwrites old errors in the container natively
+            return HttpResponse(get_toast_popup(msg, "error", use_oob=False))
+
+        if not jo_id:
+            return reload_with_error("Please select a Job Order from the list.")
+
+        target_amount = parse_decimal(request.POST.get('target_amount'))
+        if target_amount is None or target_amount <= Decimal('0'):
+            return reload_with_error("Invalid target amount. Please check your numbers.")
             
         material_ids = request.POST.getlist('material_ids')
-        reserved_amounts = request.POST.getlist('reserved_amounts')
+        reserved_amounts_raw = request.POST.getlist('reserved_amounts')
+        reserved_amounts = []
 
-        try:
-            total_reserved = sum(float(amount) for amount in reserved_amounts if amount.strip())
-        except ValueError:
-            error_msg = get_toast_popup("Invalid material reservation amounts. Ensure they are numbers.")
-            return HttpResponse(error_msg + load_machine_state(request, machine_no).content.decode('utf-8'))
+        for amt in reserved_amounts_raw:
+            if amt.strip():
+                parsed = parse_decimal(amt)
+                if parsed is None or parsed <= Decimal('0'):
+                    return reload_with_error("Invalid material reservation amounts. Ensure they are numbers.")
+                reserved_amounts.append(parsed)
+            else:
+                reserved_amounts.append(Decimal('0'))
+
+        total_reserved = sum(reserved_amounts)
 
         if total_reserved < target_amount:
-            error_msg = get_toast_popup(f"Total reserved material ({total_reserved}kg) cannot be less than the target extrusion amount ({target_amount}kg).")
-            return HttpResponse(error_msg + load_machine_state(request, machine_no).content.decode('utf-8'))
+            return reload_with_error(f"Total reserved material ({total_reserved}kg) cannot be less than target ({target_amount}kg).")
         
         job_order = get_object_or_404(JobOrder, id=jo_id)
 
         if job_order.is_completed: 
-            error_msg = get_toast_popup("This Job Order is already closed or completed.")
-            return HttpResponse(error_msg + load_machine_state(request, machine_no).content.decode('utf-8'))
+            return reload_with_error("This Job Order is already closed or completed.")
         
-        with transaction.atomic():
-            session = ExtrusionSession.objects.create(
-                job_order=job_order, machine_no=machine_no, shift=shift, target_amount_kg=target_amount
-            )
-            
-            material_ids = request.POST.getlist('material_ids')
-            reserved_amounts = request.POST.getlist('reserved_amounts')
-            
-            for mat_id, amount in zip(material_ids, reserved_amounts):
-                # Ensure they actually selected a material and entered a positive amount
-                if mat_id and amount.strip() and float(amount) > 0:
-                    mat = RawMaterial.objects.select_for_update().get(id=mat_id)
-                    
-                    if float(amount) > float(mat.current_stock_kg):
-                        error_msg = get_toast_popup(f"Insufficient stock. You attempted to reserve {amount}kg of {mat.name}, but only {mat.current_stock_kg}kg is available.")
-                        return HttpResponse(error_msg + load_machine_state(request, machine_no).content.decode('utf-8'))
+        operator = request.user.username if request.user.is_authenticated else "Unknown Operator"
+
+        try:
+            with transaction.atomic():
+                session = ExtrusionSession.objects.create(
+                    job_order=job_order, machine_no=machine_no, shift=shift, 
+                    target_amount_kg=target_amount, operator_name=operator
+                )
+                
+                for mat_id, parsed_amount in zip(material_ids, reserved_amounts):
+                    if mat_id and parsed_amount > Decimal('0'):
+                        mat = RawMaterial.objects.select_for_update().get(id=mat_id)
                         
-                    mat.current_stock_kg -= Decimal(str(amount))
-                    mat.save()
-                    
-                    SessionMaterial.objects.create(
-                        session=session, material=mat, reserved_kg=amount
-                    )
-                    
-        return load_machine_state(request, machine_no)
+                        if parsed_amount > mat.current_stock_kg:
+                            raise ValidationError(f"Insufficient stock. Attempted to reserve {parsed_amount}kg of {mat.name}, but only {mat.current_stock_kg}kg is available.")
+                            
+                        mat.current_stock_kg -= parsed_amount
+                        mat.save()
+                        
+                        SessionMaterial.objects.create(
+                            session=session, material=mat, reserved_kg=parsed_amount
+                        )
+        except ValidationError as e:
+            error_msg = " ".join(e.messages) if hasattr(e, 'messages') else str(e)
+            return reload_with_error(error_msg)
+
+        success_toast = get_toast_popup(f"Session locked in on Machine {machine_no}. Extrusion active.", "success", use_oob=False)
+        
+        # THE FIX: Order HTMX to fetch the fresh 'Active Run' UI in the background and snap it into place
+        soft_refresh = f"<script>htmx.ajax('GET', '/load-machine-state/{machine_no}/', {{target: '#machine-workspace'}});</script>"
+        return HttpResponse(success_toast + soft_refresh)
     
 def log_session_roll(request):
     """Operator logs a roll to their currently active session."""
     if request.method == "POST":
         session_id = request.POST.get('session_id')
 
-        # Helper to return an error banner and an empty state if we lose context
-        def error_no_context(msg):
-            return HttpResponse(get_toast_popup(msg, "error"))
+        def reload_with_error(msg):
+            return HttpResponse(get_toast_popup(msg, "error", use_oob=False))
 
         if not session_id:
-            return error_no_context("No active session found.")
+            return reload_with_error("No active session found.")
             
         session = get_object_or_404(ExtrusionSession, id=session_id)
 
-        # Helper to return an error banner and reload the current machine state
-        def reload_with_error(msg):
-            return HttpResponse(get_toast_popup(msg, "error") + load_machine_state(request, session.machine_no).content.decode('utf-8'))
-
         if session.status != 'ACTIVE':
-            return reload_with_error("This machine session is no longer active. Please refresh your dashboard.")
+            return reload_with_error("This machine session is no longer active. Please start a new run.")
         
-        try:
-            roll_weight = float(request.POST.get('roll_weight'))
-            wastage = float(request.POST.get('wastage') or 0)
-        except ValueError:
-            return reload_with_error("Invalid input. Ensure weights are numeric.")
-
-        if roll_weight <= 0:
+        roll_weight = parse_decimal(request.POST.get('roll_weight'))
+        wastage = parse_decimal(request.POST.get('wastage')) or Decimal('0')
+        
+        if roll_weight is None or roll_weight <= Decimal('0'):
             return reload_with_error("Roll weight must be strictly greater than zero.")
         
-        if roll_weight > 500: 
+        if roll_weight > Decimal('500'): 
             return reload_with_error(f"{roll_weight}kg exceeds maximum physical roll capacity. Check for typos.")
             
-        if wastage < 0 or wastage > roll_weight:
+        if wastage < Decimal('0') or wastage > roll_weight:
             return reload_with_error("Wastage cannot be negative or greater than the total roll weight itself.")
 
-        # Save the log
-        ExtrusionLog.objects.create(session=session, roll_weight_kg=roll_weight, wastage_kg=wastage)
+        try:
+            ExtrusionLog.objects.create(session=session, roll_weight_kg=roll_weight, wastage_kg=wastage)
+        except ValidationError as e:
+            error_msg = " ".join(e.messages) if hasattr(e, 'messages') else str(e)
+            return reload_with_error(error_msg)
         
-        # Check if the target was reached to trigger auto-completion
         session.refresh_from_db() 
+        
         if session.status == 'COMPLETED':
-            success_msg = get_toast_popup("Target Reached! Session Auto-Completed.", "success")
-            return HttpResponse(success_msg + load_machine_state(request, session.machine_no).content.decode('utf-8'))
+            success_msg = get_toast_popup("Target Reached! Session Auto-Completed.", "success", use_oob=False)
+        else:
+            success_msg = get_toast_popup(f"Successfully logged {roll_weight}kg roll.", "success", use_oob=False)
             
-        # Standard successful reload of the active session UI without an alert
-        return load_machine_state(request, session.machine_no)
+        soft_refresh = f"""
+        <script>
+            var rw = document.querySelector('input[name="roll_weight"]'); if(rw) rw.value='';
+            var wst = document.querySelector('input[name="wastage"]'); if(wst) wst.value='';
+            htmx.ajax('GET', '/load-machine-state/{session.machine_no}/', {{target: '#machine-workspace'}});
+        </script>
+        """
+        return HttpResponse(success_msg + soft_refresh)
 
 def stop_extrusion_session(request, session_id):
     """Operator manually terminates the job early."""
     session = get_object_or_404(ExtrusionSession, id=session_id)
     session.stop_session()
-    return load_machine_state(request, session.machine_no)
+    
+    warning_toast = get_toast_popup(f"Session on Machine {session.machine_no} terminated early.", "warning", use_oob=False)
+    
+    soft_refresh = f"<script>htmx.ajax('GET', '/load-machine-state/{session.machine_no}/', {{target: '#machine-workspace'}});</script>"
+    return HttpResponse(warning_toast + soft_refresh)
 
 # -----------------------------------------------------------------------------
 # CUTTING SUBMISSION
@@ -248,27 +314,18 @@ def submit_cutting(request):
         jo_id = request.POST.get('job_order')
         
         def reload_with_error(error_text):
-            jobs = JobOrder.objects.filter(
-                is_completed=False, 
-                total_extruded_kg__gt=F('total_cut_kg') + F('total_cutting_wastage_kg')
-            ).order_by('-id')[:20]
-            err_html = get_toast_popup(error_text)
-            form_html = render(request, 'production/partials/cutting_form.html', {'job_orders': jobs, 'dept': 'cutting'}).content.decode('utf-8')
-            return HttpResponse(err_html + form_html)
+            return HttpResponse(get_toast_popup(error_text, "error", use_oob=False))
 
         if not jo_id:
             return reload_with_error("Please select an active job from the list first.")
 
-        try:
-            output_kg = float(request.POST.get('output_kg'))
-            wastage = float(request.POST.get('wastage') or 0)
-        except ValueError:
-            return reload_with_error("Invalid input. Please enter numbers only.")
+        output_kg = parse_decimal(request.POST.get('output_kg'))
+        wastage = parse_decimal(request.POST.get('wastage')) or Decimal('0')
 
-        if output_kg <= 0 or wastage < 0:
-            return reload_with_error("Weights cannot be zero or negative.")
+        if output_kg is None or output_kg <= Decimal('0') or wastage < Decimal('0'):
+            return reload_with_error("Invalid input. Weights must be proper, positive numbers.")
             
-        if output_kg > 2000: 
+        if output_kg > Decimal('2000'): 
             return reload_with_error(f"{output_kg}kg exceeds the maximum allowed limit for a single entry. Check for typos.")
 
         job_order = get_object_or_404(JobOrder, id=jo_id)
@@ -276,22 +333,79 @@ def submit_cutting(request):
         if job_order.is_completed:
             return reload_with_error("This Job Order is already closed or completed.")
         
-        remaining_to_cut = float(job_order.total_extruded_kg) - float(job_order.total_cut_kg)
+        remaining_to_cut = job_order.total_extruded_kg - job_order.total_cut_kg
         
-        if output_kg > (remaining_to_cut * 1.05):
+        if output_kg > (remaining_to_cut * Decimal('1.05')):
             return reload_with_error(f"Cannot log {output_kg}kg. Only {remaining_to_cut:.1f}kg remains from Extrusion.")
 
-        CuttingLog.objects.create(
-            job_order=job_order,
-            machine_no=request.POST.get('machine'),
-            shift=request.POST.get('shift'),
-            output_kg=output_kg,
-            wastage_kg=wastage,
-            operator_name="Cutting Op"
-        )
+        operator = request.user.username if request.user.is_authenticated else "Unknown Operator"
+
+        try:
+            CuttingLog.objects.create(
+                job_order=job_order,
+                machine_no=request.POST.get('machine'),
+                shift=request.POST.get('shift'),
+                output_kg=output_kg,
+                wastage_kg=wastage,
+                operator_name=operator
+            )
+        except ValidationError as e:
+            error_msg = " ".join(e.messages) if hasattr(e, 'messages') else str(e)
+            return reload_with_error(error_msg)
+            
         job_order.refresh_from_db()
         
-        return render(request, 'production/partials/cutting_success.html', {'jo': job_order})
+        # 1. The Fading Success Toast
+        success_toast = get_toast_popup(f"Successfully logged {output_kg}kg for {job_order.jo_number}.", "success", use_oob=False)
+        
+        # Determine if there is any material left to cut
+        is_target_reached = str(job_order.total_cut_kg >= job_order.total_extruded_kg).lower()
+
+        # 2. The Smart Soft Refresh Script
+        soft_refresh_script = f"""
+        <script>
+            var out = document.querySelector('input[name="output_kg"]'); if(out) out.value='';
+            var wst = document.querySelector('input[name="wastage"]'); if(wst) wst.value='';
+            
+            var searchInput = document.querySelector('input[name="q"]');
+            if (searchInput) {{ 
+                var url = searchInput.getAttribute('hx-get');
+                var targetId = searchInput.getAttribute('hx-target').replace('#', '');
+                var query = searchInput.value || '';
+                
+                // Listen for the exact moment the HTMX list update finishes
+                var swapListener = function(e) {{
+                    if (e.detail.target.id === targetId) {{
+                        var radio = document.getElementById('jo_{job_order.id}');
+                        var targetReached = {is_target_reached};
+                        
+                        // If the job is still active, re-select it and pull the fresh specs!
+                        if (radio && !targetReached) {{
+                            radio.checked = true;
+                            fetch(`/get-job-specs/{job_order.id}/?dept=cutting`)
+                                .then(response => response.text())
+                                .then(html => {{
+                                    var specContainer = document.getElementById('job-specs-container');
+                                    if (specContainer) specContainer.innerHTML = html;
+                                }});
+                        }} else {{
+                            // Only wipe the screen if the job is truly finished
+                            var specContainer = document.getElementById('job-specs-container');
+                            if (specContainer) {{
+                                specContainer.innerHTML = '<div style="padding: 40px 20px; text-align: center; color: var(--text-muted); border: 2px dashed var(--border-soft); border-radius: var(--radius); margin-bottom: 20px;"><div style="font-size: 2.5rem; margin-bottom: 15px; opacity: 0.5;">✅</div><p style="font-weight: bold; text-transform: uppercase; margin: 0; font-size: 1.1rem;">Target Reached</p><p style="font-size: 0.9rem; color: var(--border-hard); margin-top: 8px;">Select a new job to continue.</p></div>';
+                            }}
+                            var progressBar = document.getElementById('active-progress-bar');
+                            if (progressBar) progressBar.innerHTML = '';
+                        }}
+                        document.body.removeEventListener('htmx:afterSwap', swapListener);
+                    }}
+                }};
+                document.body.addEventListener('htmx:afterSwap', swapListener);
+                htmx.ajax('GET', url + '&q=' + encodeURIComponent(query), {{target: '#' + targetId}}); 
+            }}
+        </script>
+        """
+        return HttpResponse(success_toast + soft_refresh_script)
     
 # -----------------------------------------------------------------------------
 # PACKING SUBMISSION
@@ -301,55 +415,105 @@ def submit_packing(request):
         jo_id = request.POST.get('job_order')
         
         def reload_with_error(error_text):
-            jobs = JobOrder.objects.filter(
-                is_completed=False, 
-                total_cut_kg__gt=F('total_packed_kg')
-            ).order_by('-id')[:20]
-            err_html = get_toast_popup(error_text)
-            form_html = render(request, 'production/partials/packing_form.html', {'job_orders': jobs, 'dept': 'packing'}).content.decode('utf-8')
-            return HttpResponse(err_html + form_html)
+            return HttpResponse(get_toast_popup(error_text, "error", use_oob=False))
 
         if not jo_id:
             return reload_with_error("Please select a job from the list first.")
 
+        packing_size = parse_decimal(request.POST.get('packing_size'))
+        
         try:
-            packing_size = float(request.POST.get('packing_size'))
             quantity = int(request.POST.get('quantity'))
-        except ValueError:
-            return reload_with_error("Invalid input. Ensure quantity is a whole number.")
+        except (ValueError, TypeError):
+            quantity = None
 
-        if packing_size <= 0 or quantity <= 0:
-            return reload_with_error("Packing size and quantity must be greater than zero.")
+        if packing_size is None or packing_size <= Decimal('0') or quantity is None or quantity <= 0:
+            return reload_with_error("Invalid input. Ensure packing size is a proper number and quantity is a whole number greater than zero.")
 
-        total_weight_submitting = packing_size * quantity
+        total_weight_submitting = packing_size * Decimal(str(quantity))
         job_order = get_object_or_404(JobOrder, id=jo_id)
 
         if job_order.is_completed:
             return reload_with_error("This Job Order is already closed or completed.")
 
-        remaining_to_pack = float(job_order.total_cut_kg) - float(job_order.total_packed_kg)
+        remaining_to_pack = job_order.total_cut_kg - job_order.total_packed_kg
 
-        if total_weight_submitting > (remaining_to_pack * 1.05):
+        if total_weight_submitting > (remaining_to_pack * Decimal('1.05')):
             return reload_with_error(f"Attempting to pack {total_weight_submitting:.1f}kg, but only {remaining_to_pack:.1f}kg is available.")
 
-        PackingLog.objects.create(
-            job_order=job_order,
-            packing_size_kg=packing_size,
-            quantity_packed=quantity,
-            operator_name="Packing Op"
-        )
+        operator = request.user.username if request.user.is_authenticated else "Unknown Operator"
+
+        try:
+            PackingLog.objects.create(
+                job_order=job_order,
+                packing_size_kg=packing_size,
+                quantity_packed=quantity,
+                operator_name=operator
+            )
+        except ValidationError as e:
+            error_msg = " ".join(e.messages) if hasattr(e, 'messages') else str(e)
+            return reload_with_error(error_msg)
+
         job_order.refresh_from_db()
 
-        if float(job_order.total_packed_kg) >= float(job_order.order_quantity_kg):
-            job_order.is_completed = True
-            job_order.save()
+        if job_order.total_packed_kg >= job_order.order_quantity_kg:
+            job_order.complete_job()
+            success_msg = f"Target Reached! Job {job_order.jo_number} is now fully packed and closed."
+        else:
+            success_msg = f"Successfully packed {total_weight_submitting}kg for {job_order.jo_number}."
             
-        return render(request, 'production/partials/packing_success.html', {'jo': job_order}) 
+        success_toast = get_toast_popup(success_msg, "success", use_oob=False)
+        
+        # Determine if the entire job order is fulfilled
+        is_target_reached = str(job_order.is_completed).lower()
+        
+        # 2. The Smart Soft Refresh Script
+        soft_refresh_script = f"""
+        <script>
+            var ps = document.querySelector('input[name="packing_size"]'); if(ps) ps.value='';
+            var qty = document.querySelector('input[name="quantity"]'); if(qty) qty.value='';
+            
+            var searchInput = document.querySelector('input[name="q"]');
+            if (searchInput) {{ 
+                var url = searchInput.getAttribute('hx-get');
+                var targetId = searchInput.getAttribute('hx-target').replace('#', '');
+                var query = searchInput.value || '';
+                
+                var swapListener = function(e) {{
+                    if (e.detail.target.id === targetId) {{
+                        var radio = document.getElementById('jo_{job_order.id}');
+                        var targetReached = {is_target_reached};
+                        
+                        if (radio && !targetReached) {{
+                            radio.checked = true;
+                            fetch(`/get-job-specs/{job_order.id}/?dept=packing`)
+                                .then(response => response.text())
+                                .then(html => {{
+                                    var specContainer = document.getElementById('job-specs-container');
+                                    if (specContainer) specContainer.innerHTML = html;
+                                }});
+                        }} else {{
+                            var specContainer = document.getElementById('job-specs-container');
+                            if (specContainer) {{
+                                specContainer.innerHTML = '<div style="padding: 40px 20px; text-align: center; color: var(--text-muted); border: 2px dashed var(--border-soft); border-radius: var(--radius); margin-bottom: 20px;"><div style="font-size: 2.5rem; margin-bottom: 15px; opacity: 0.5;">✅</div><p style="font-weight: bold; text-transform: uppercase; margin: 0; font-size: 1.1rem;">Order Fulfilled</p><p style="font-size: 0.9rem; color: var(--border-hard); margin-top: 8px;">Select a new job to continue.</p></div>';
+                            }}
+                            var progressBar = document.getElementById('active-progress-bar');
+                            if (progressBar) progressBar.innerHTML = '';
+                        }}
+                        document.body.removeEventListener('htmx:afterSwap', swapListener);
+                    }}
+                }};
+                document.body.addEventListener('htmx:afterSwap', swapListener);
+                htmx.ajax('GET', url + '&q=' + encodeURIComponent(query), {{target: '#' + targetId}}); 
+            }}
+        </script>
+        """
+        return HttpResponse(success_toast + soft_refresh_script)
+    
 # -----------------------------------------------------------------------------
 # HTMX FORM FETCHING & SEARCHING
 # -----------------------------------------------------------------------------
 def get_extrusion_form(request):
-    # Appears if the order is incomplete AND the Net Usable Extruded is less than the required order quantity
     job_orders = JobOrder.objects.filter(
         is_completed=False, 
         order_quantity_kg__gt=F('total_extruded_kg') - F('total_cutting_wastage_kg')
@@ -357,7 +521,6 @@ def get_extrusion_form(request):
     return render(request, 'production/partials/extrusion_form.html', {'job_orders': job_orders})
 
 def get_cutting_form(request):
-    # Appears if the order is incomplete AND there is uncut material waiting on the floor
     job_orders = JobOrder.objects.filter(
         is_completed=False,
         total_extruded_kg__gt=F('total_cut_kg') + F('total_cutting_wastage_kg')
@@ -365,7 +528,6 @@ def get_cutting_form(request):
     return render(request, 'production/partials/cutting_form.html', {'job_orders': job_orders, 'dept': 'cutting'})
 
 def get_packing_form(request):
-    # Appears if the order is incomplete AND there is cut material waiting to be packed
     job_orders = JobOrder.objects.filter(
         is_completed=False,
         total_cut_kg__gt=F('total_packed_kg')
@@ -376,10 +538,8 @@ def search_jobs(request):
     query = request.GET.get('q', '')
     dept = request.GET.get('dept', '') 
     
-    # Global rule: Search only applies to incomplete, valid orders
     jobs = JobOrder.objects.filter(is_completed=False, order_quantity_kg__gt=0)
     
-    # Apply the strict, self-correcting department filters
     if dept == 'extrusion':
         jobs = jobs.filter(order_quantity_kg__gt=F('total_extruded_kg') - F('total_cutting_wastage_kg'))
     elif dept == 'cutting':
@@ -391,17 +551,13 @@ def search_jobs(request):
         jobs = jobs.filter(Q(jo_number__icontains=query) | Q(customer__icontains=query))
         
     return render(request, 'production/partials/job_radio_list.html', {'job_orders': jobs[:20], 'dept': dept})
+
 # -----------------------------------------------------------------------------
 # DASHBOARD & TOWER LOGIC
 # -----------------------------------------------------------------------------
 def control_tower(request):
-    # Fetch physical stock warnings
     low_stock_materials = RawMaterial.objects.filter(current_stock_kg__lte=F('reorder_point_kg'))
-    
-    # Fetch Hypothetical Stock (Shortfalls) that need purchasing
     purchasing_shortfalls = MaterialAllocation.objects.filter(shortfall_kg__gt=0, job_order__is_completed=False)
-    
-    # Dashboard stats
     active_jobs = JobOrder.objects.filter(is_completed=False).order_by('-id')[:10]
     
     context = {
@@ -422,12 +578,11 @@ def get_job_specs(request, jo_id):
     dept = request.GET.get('dept')
     
     if not dept:
-        # Dynamically infer the stage using the Net Usable logic
-        usable_extruded = float(job_order.total_extruded_kg) - float(job_order.total_cutting_wastage_kg)
+        usable_extruded = job_order.total_extruded_kg - job_order.total_cutting_wastage_kg
         
-        if usable_extruded < float(job_order.order_quantity_kg):
+        if usable_extruded < job_order.order_quantity_kg:
             dept = 'extrusion'
-        elif float(job_order.total_cut_kg) + float(job_order.total_cutting_wastage_kg) < float(job_order.total_extruded_kg):
+        elif (job_order.total_cut_kg + job_order.total_cutting_wastage_kg) < job_order.total_extruded_kg:
             dept = 'cutting'
         else:
             dept = 'packing'
