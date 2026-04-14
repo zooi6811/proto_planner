@@ -15,6 +15,23 @@
     </style>
 </head>
 <body hx-ext="django-htmx">
+    <nav class="top-nav">
+        <div class="nav-brand">
+            PROTO-PLANNER <span style="color: var(--action-blue);">ERP</span>
+        </div>
+        <div class="nav-links">
+            <a href="/" >Production Terminal</a>
+            <a href="/control-tower/" class="active">Control Tower</a>
+        </div>
+        <div class="nav-user">
+            <span>OPERATOR: <strong>{{ request.user.username|default:"GUEST"|upper }}</strong></span>
+            
+            <form method="post" action="{% url 'logout' %}" style="margin: 0; display: inline-block;">
+                {% csrf_token %}
+                <button type="submit" class="btn-logout" style="cursor: pointer; font-family: var(--font-sans);">END SHIFT</button>
+            </form>
+        </div>
+    </nav>  
 
     <div class="header">
         <h1>Live Production Status</h1>

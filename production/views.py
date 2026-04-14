@@ -1,20 +1,61 @@
-from django.shortcuts import render, get_object_or_404
+from django.shortcuts import render, get_object_or_404, redirect
 from django.http import HttpResponse
 from django.db.models import Sum, F, Q
 from django.db import transaction
 from django.core.exceptions import ValidationError
 from django.utils.html import escape
 from decimal import Decimal, InvalidOperation
-from .models import (
-    JobOrder, ExtrusionLog, CuttingLog, PackingLog, RawMaterial, 
+from .models import (JobOrder, ExtrusionLog, CuttingLog, PackingLog, RawMaterial, 
     MaterialUsageLog, MaterialAllocation, MaterialCategory, 
-    ExtrusionSession, SessionMaterial
-)
+    ExtrusionSession, SessionMaterial)
 from django.utils import timezone
 import uuid
 from datetime import timedelta
-
 from django.utils.html import escape
+from django.contrib.auth import authenticate, login as django_login
+from django.contrib import messages
+from .models import UserProfile
+from django.contrib.auth.decorators import login_required
+from django.contrib.auth import logout as django_logout
+
+def gateway_login(request):
+    # If already logged in, route them away from the login page
+    if request.user.is_authenticated:
+        if hasattr(request.user, 'profile') and request.user.profile.role == 'STAFF':
+            return redirect('control_tower') # Ensure you have a url named 'control_tower'
+        return redirect('dashboard') # Ensure you have a url named 'dashboard'
+
+    if request.method == 'POST':
+        login_type = request.POST.get('login_type')
+
+        # 1. Handle Operator PIN Log-in
+        if login_type == 'operator':
+            pin = request.POST.get('pin_code')
+            try:
+                # Find the profile with this exact PIN
+                profile = UserProfile.objects.get(pin_code=pin, role='OPERATOR')
+                # Log the associated user in
+                django_login(request, profile.user)
+                return redirect('dashboard')
+            except UserProfile.DoesNotExist:
+                messages.error(request, "Invalid Operator PIN.")
+
+        # 2. Handle Staff Username/Password Log-in
+        elif login_type == 'staff':
+            username = request.POST.get('username')
+            password = request.POST.get('password')
+            user = authenticate(request, username=username, password=password)
+            
+            if user is not None:
+                django_login(request, user)
+                # Check if they have a profile; default to operator terminal if not strictly STAFF
+                if hasattr(user, 'profile') and user.profile.role == 'STAFF':
+                    return redirect('control_tower')
+                return redirect('dashboard')
+            else:
+                messages.error(request, "Invalid credentials or unauthorised access.")
+
+    return render(request, 'production/login.html')
 
 def get_toast_popup(message, alert_type="error", use_oob=True):
     """
@@ -140,6 +181,7 @@ def submit_material_usage(request):
         success_msg = get_toast_popup(f"Successfully logged {amount_kg}kg of {material.name}.", "success")
         return HttpResponse(success_msg)
 
+@login_required(login_url='login')
 def operator_dashboard(request):
     job_orders = JobOrder.objects.all()
     return render(request, 'production/dashboard.html', {'job_orders': job_orders})
@@ -514,6 +556,7 @@ def submit_packing(request):
 # -----------------------------------------------------------------------------
 # HTMX FORM FETCHING & SEARCHING
 # -----------------------------------------------------------------------------
+@login_required(login_url='login')
 def get_extrusion_form(request):
     job_orders = JobOrder.objects.filter(
         is_completed=False, 
@@ -528,6 +571,7 @@ def get_extrusion_form(request):
         'active_machines': list(active_machines) # Convert QuerySet to list for easy template checking
     })
 
+@login_required(login_url='login')
 def get_cutting_form(request):
     job_orders = JobOrder.objects.filter(
         is_completed=False,
@@ -535,6 +579,7 @@ def get_cutting_form(request):
     ).order_by('-id')[:20]
     return render(request, 'production/partials/cutting_form.html', {'job_orders': job_orders, 'dept': 'cutting'})
 
+@login_required(login_url='login')
 def get_packing_form(request):
     job_orders = JobOrder.objects.filter(
         is_completed=False,
@@ -563,22 +608,24 @@ def search_jobs(request):
 # -----------------------------------------------------------------------------
 # DASHBOARD & TOWER LOGIC
 # -----------------------------------------------------------------------------
+@login_required(login_url='login')
 def control_tower(request):
-    # 1. TIMEFRAME STATE (Safely intercepting duplicate HTMX params)
+    if hasattr(request.user, 'profile') and request.user.profile.role == 'OPERATOR':
+        return redirect('dashboard')
+    
+    # Core States Handling
     timeframes = request.GET.getlist('timeframe')
     timeframe = timeframes[0] if timeframes else 'daily'
     
-    # 2. ACCORDION EXPANDED STATE
     expanded_param = request.GET.get('expanded', '')
     expanded_sections = expanded_param.split(',') if expanded_param else []
     
-    # 3. JOB TAB STATE
     job_tabs = request.GET.getlist('job_tab')
     job_tab = job_tabs[0] if job_tabs else 'active'
     
     now = timezone.now()
     
-    # Calculate Start Dates based on Timeframe
+    # Timeframe Resolutions
     if timeframe == 'weekly':
         start_date = now.date() - timedelta(days=now.weekday()) 
         label_prefix = "This Week's"
@@ -592,13 +639,12 @@ def control_tower(request):
         start_date = now.date()
         label_prefix = "Today's"
 
-    # Construct Date Filter
     if timeframe == 'daily':
         date_filter = {'timestamp__date': start_date}
     else:
         date_filter = {'timestamp__date__gte': start_date}
 
-    # --- ZONE 1: WHAT HAS BEEN DONE (Totals) ---
+    # Aggregate KPI Totals
     total_extruded = ExtrusionLog.objects.filter(**date_filter).aggregate(
         total=Sum('roll_weight_kg'))['total'] or Decimal('0')
         
@@ -609,7 +655,7 @@ def control_tower(request):
         weight=F('packing_size_kg') * F('quantity_packed')
     ).aggregate(total=Sum('weight'))['total'] or Decimal('0')
 
-    # --- ZONE 1.5: THE ADVANCED BREAKDOWNS (Grouped by Job Order) ---
+    # Macro Breakdowns
     extrusion_breakdown = ExtrusionLog.objects.filter(**date_filter).values(
         jo_num=F('session__job_order__jo_number'),
         customer=F('session__job_order__customer')
@@ -625,31 +671,29 @@ def control_tower(request):
         customer=F('job_order__customer')
     ).annotate(total=Sum(F('packing_size_kg') * F('quantity_packed'))).order_by('-total')
 
-    # --- ZONE 2: LIVE MACHINES ---
+    # Live Operational Context
     active_machines = ExtrusionSession.objects.filter(status='ACTIVE').select_related('job_order')
-    
-    # --- ZONE 3A: BLOCKERS & ALERTS ---
     low_stock_materials = RawMaterial.objects.filter(current_stock_kg__lte=F('reorder_point_kg'))
     purchasing_shortfalls = MaterialAllocation.objects.filter(shortfall_kg__gt=0, job_order__is_completed=False)
     
-    # --- ZONE 3B: PIPELINE VISIBILITY (Job Tabs) ---
-    # Queued: Not completed, zero extrusion progress. Ordered oldest first.
-    queued_jobs = JobOrder.objects.filter(is_completed=False, total_extruded_kg=0).order_by('id')[:10]
+    # Factory Pipeline Tiers
+    active_jobs = JobOrder.objects.filter(
+        Q(extrusion_sessions__status='ACTIVE') | Q(total_extruded_kg__gt=0),
+        is_completed=False
+    ).distinct().order_by('-id')[:10]
+
+    queued_jobs = JobOrder.objects.filter(
+        is_completed=False, 
+        total_extruded_kg=0
+    ).exclude(extrusion_sessions__status='ACTIVE').order_by('id')[:10]
     
-    # Active: Not completed, extrusion has begun.
-    active_jobs = JobOrder.objects.filter(is_completed=False, total_extruded_kg__gt=0).order_by('-id')[:10]
-    
-    # Completed: Finished jobs. Ordered newest first.
     completed_jobs = JobOrder.objects.filter(is_completed=True).order_by('-id')[:10]
 
     context = {
-        # Core States
         'timeframe': timeframe,
         'expanded_sections': expanded_sections,
         'expanded_param': expanded_param,
         'job_tab': job_tab,
-        
-        # Zone 1
         'label_prefix': label_prefix,
         'total_extruded': total_extruded,
         'total_cut': total_cut,
@@ -657,20 +701,15 @@ def control_tower(request):
         'extrusion_breakdown': extrusion_breakdown,
         'cutting_breakdown': cutting_breakdown,
         'packing_breakdown': packing_breakdown,
-        
-        # Zone 2 & 3A
         'active_machines': active_machines,
         'low_stock_materials': low_stock_materials,
         'purchasing_shortfalls': purchasing_shortfalls,
-        
-        # Zone 3B
         'queued_jobs': queued_jobs,
         'active_jobs': active_jobs,
         'completed_jobs': completed_jobs,
     }
     
-    # HTMX partial rendering vs full page load
-    if getattr(request, 'htmx', False):
+    if getattr(request, 'htmx', False) or request.headers.get('HX-Request') == 'true':
         return render(request, 'production/partials/tower_content.html', context)
     return render(request, 'production/control_tower.html', context)
 
@@ -693,3 +732,9 @@ def get_job_specs(request, jo_id):
             dept = 'packing'
             
     return render(request, 'production/partials/job_spec_card.html', {'jo': job_order, 'dept': dept})
+
+def custom_logout(request):
+    """Safely ends the user session and returns to the gateway."""
+    django_logout(request)
+    # 'login' refers to the name='login' we defined in urls.py for the gateway
+    return redirect('login')

@@ -1,22 +1,22 @@
 :root {
     /* Industrial Colour Palette */
-    --bg-floor: #e2e8f0;      /* Slate 200 - Factory floor grey */
-    --surface: #ffffff;       /* Pure white for data panels */
-    --surface-alt: #f8fafc;   /* Slate 50 - Subtle offset */
+    --bg-floor: #e2e8f0;      
+    --surface: #ffffff;       
+    --surface-alt: #f8fafc;   
     
-    --text-primary: #0f172a;  /* Slate 900 - High contrast text */
-    --text-muted: #475569;    /* Slate 600 - Secondary info */
+    --text-primary: #0f172a;  
+    --text-muted: #475569;    
     
-    --border-hard: #94a3b8;   /* Slate 400 - Distinct boundaries */
-    --border-soft: #cbd5e1;   /* Slate 300 - Internal dividers */
+    --border-hard: #94a3b8;   
+    --border-soft: #cbd5e1;   
     
     /* Action & Status Colours */
-    --brand-dark: #1e293b;    /* Slate 800 - Headers and primary navigation */
-    --action-blue: #0284c7;   /* Sky 600 - Primary buttons */
-    --status-green: #10b981;  /* Emerald 500 - Go/Active */
-    --status-red: #ef4444;    /* Red 500 - Stop/Error */
+    --brand-dark: #1e293b;    
+    --action-blue: #0284c7;   
+    --status-green: #10b981;  
+    --status-red: #ef4444;    
     
-    --radius: 4px;            /* Sharp, practical corners */
+    --radius: 4px;            
     --font-sans: 'Segoe UI', system-ui, sans-serif;
     --font-mono: ui-monospace, SFMono-Regular, Consolas, monospace;
 }
@@ -40,7 +40,7 @@ h1, h2, h3 { margin: 0; color: var(--text-primary); text-transform: uppercase; l
     border: 1px solid var(--border-hard);
     border-radius: var(--radius);
     padding: 20px;
-    box-shadow: 2px 2px 0px rgba(0,0,0,0.05); /* Harsh, flat shadow */
+    box-shadow: 2px 2px 0px rgba(0,0,0,0.05);
 }
 .panel-header {
     border-bottom: 2px solid var(--border-soft);
@@ -77,15 +77,12 @@ input:focus, select:focus {
 .btn-success { background-color: var(--status-green); color: white; }
 .btn-success:active { transform: translateY(2px); background-color: #059669; }
 
-/* Status Indicators */
+/* Status Indicators & Animations */
 .status-dot {
     width: 12px; height: 12px; border-radius: 50%; display: inline-block;
 }
 .status-live { background-color: var(--status-green); box-shadow: 0 0 8px var(--status-green); }
-
-.text-bright {
-    color: #ffffff !important; 
-}   
+.text-bright { color: #ffffff !important; }   
 
 @keyframes pulseRed {
     0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
@@ -101,3 +98,69 @@ input:focus, select:focus {
     display: inline-block;
     animation: pulseRed 2s infinite;
 }
+
+/* Unified Navigation */
+.top-nav {
+    background-color: var(--brand-dark);
+    color: var(--surface);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 20px;
+    height: 60px;
+    margin: -20px -20px 20px -20px;
+    border-bottom: 4px solid var(--action-blue);
+}
+
+.nav-brand {
+    font-weight: 900;
+    font-size: 1.2rem;
+    letter-spacing: 1px;
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+.nav-links { display: flex; gap: 10px; }
+.nav-links a {
+    color: var(--border-soft);
+    text-decoration: none;
+    font-weight: bold;
+    padding: 8px 15px;
+    border-radius: var(--radius);
+    text-transform: uppercase;
+    font-size: 0.9rem;
+    transition: 0.2s;
+}
+.nav-links a:hover, .nav-links a.active {
+    background-color: rgba(255, 255, 255, 0.1);
+    color: var(--surface);
+}
+
+.nav-user {
+    font-size: 0.85rem;
+    color: var(--border-soft);
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+.btn-logout {
+    background: transparent;
+    border: 1px solid var(--status-red);
+    color: var(--status-red);
+    padding: 5px 10px;
+    border-radius: var(--radius);
+    text-decoration: none;
+    font-weight: bold;
+    transition: 0.2s;
+}
+.btn-logout:hover { background: var(--status-red); color: white; }
+
+/* Page Headers */
+.header { 
+    background: var(--brand-dark); padding: 20px; border-radius: var(--radius);
+    display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;
+}
+.header h1 { color: #ffffff; font-size: 1.8rem; margin: 0; text-transform: uppercase; }
+.live-tag { color: var(--border-soft); font-family: var(--font-mono); font-weight: bold; font-size: 0.9rem; }

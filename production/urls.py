@@ -1,7 +1,14 @@
 from django.urls import path, re_path
 from . import views
+from django.contrib.auth.views import LogoutView
 
 urlpatterns = [
+    # Your gateway login
+    path('login/', views.gateway_login, name='login'),
+    
+    # The crucial logout override (notice the next_page parameter)
+    path('logout/', LogoutView.as_view(next_page='login'), name='logout'),
+    
     # Main Dashboards
     path('', views.operator_dashboard, name='dashboard'),
     path('control-tower/', views.control_tower, name='control_tower'),

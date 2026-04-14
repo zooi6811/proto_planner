@@ -1,6 +1,7 @@
 <div style="display: flex; flex-direction: column; gap: 20px;">
 
     <input type="hidden" name="timeframe" value="{{ timeframe }}">
+    <input type="hidden" name="expanded" id="expanded-state" value="{{ expanded_param }}">
 
     <div style="display: flex; justify-content: space-between; align-items: flex-end;">
         <h2 style="color: var(--brand-dark); margin: 0;">Production Volume</h2>
@@ -9,22 +10,17 @@
             <button hx-get="/control-tower/?timeframe=daily" hx-target="#tower-container" 
                     class="btn {% if timeframe == 'daily' %}btn-primary{% endif %}" 
                     style="padding: 5px 15px; font-size: 0.85rem; {% if timeframe != 'daily' %}background: transparent; color: var(--text-muted);{% endif %}">Daily</button>
-            
             <button hx-get="/control-tower/?timeframe=weekly" hx-target="#tower-container" 
                     class="btn {% if timeframe == 'weekly' %}btn-primary{% endif %}" 
                     style="padding: 5px 15px; font-size: 0.85rem; {% if timeframe != 'weekly' %}background: transparent; color: var(--text-muted);{% endif %}">Weekly</button>
-            
             <button hx-get="/control-tower/?timeframe=monthly" hx-target="#tower-container" 
                     class="btn {% if timeframe == 'monthly' %}btn-primary{% endif %}" 
                     style="padding: 5px 15px; font-size: 0.85rem; {% if timeframe != 'monthly' %}background: transparent; color: var(--text-muted);{% endif %}">Monthly</button>
-            
             <button hx-get="/control-tower/?timeframe=yearly" hx-target="#tower-container" 
                     class="btn {% if timeframe == 'yearly' %}btn-primary{% endif %}" 
                     style="padding: 5px 15px; font-size: 0.85rem; {% if timeframe != 'yearly' %}background: transparent; color: var(--text-muted);{% endif %}">Yearly</button>
         </div>
     </div>
-
-    <input type="hidden" name="expanded" id="expanded-state" value="{{ expanded_param }}">
 
     <style>
         .kpi-details { background: var(--surface); border: 1px solid var(--border-hard); border-radius: var(--radius); box-shadow: 2px 2px 0px rgba(0,0,0,0.05); }
@@ -120,7 +116,6 @@
                 stateInput.value = expanded.join(',');
             }
 
-            // Listen for any native toggle event and save it to the hidden input immediately
             detailsElements.forEach(function(el) {
                 el.addEventListener('toggle', updateState);
             });
@@ -198,11 +193,9 @@
                     <button hx-get="/control-tower/?job_tab=queued" hx-target="#tower-container" 
                             class="btn {% if job_tab == 'queued' %}btn-primary{% endif %}" 
                             style="padding: 6px 15px; font-size: 0.85rem; {% if job_tab != 'queued' %}background: transparent; color: var(--text-muted);{% endif %}">Queued</button>
-                    
                     <button hx-get="/control-tower/?job_tab=active" hx-target="#tower-container" 
                             class="btn {% if job_tab == 'active' %}btn-primary{% endif %}" 
                             style="padding: 6px 15px; font-size: 0.85rem; {% if job_tab != 'active' %}background: transparent; color: var(--text-muted);{% endif %}">Active</button>
-                    
                     <button hx-get="/control-tower/?job_tab=completed" hx-target="#tower-container" 
                             class="btn {% if job_tab == 'completed' %}btn-primary{% endif %}" 
                             style="padding: 6px 15px; font-size: 0.85rem; {% if job_tab != 'completed' %}background: transparent; color: var(--text-muted);{% endif %}">Completed</button>

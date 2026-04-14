@@ -1,0 +1,222 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Gateway | Proto-Planner ERP</title>
+    <link rel="stylesheet" href="{% static 'css/industrial.css' %}?v=2">
+    <style>
+        body {
+            background-color: var(--brand-dark);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            overflow: hidden;
+        }
+        
+        .login-container {
+            width: 100%;
+            max-width: 900px;
+            background: var(--surface);
+            border-radius: 8px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            overflow: hidden;
+            border-top: 6px solid var(--action-blue);
+        }
+
+        .login-header {
+            text-align: center;
+            padding: 30px;
+            background: var(--surface-alt);
+            border-bottom: 2px solid var(--border-soft);
+        }
+
+        .login-header h1 { color: var(--brand-dark); font-size: 2rem; margin: 0; }
+        .login-header p { color: var(--text-muted); font-family: var(--font-mono); margin-top: 5px; text-transform: uppercase; }
+
+        /* The Choice Screen */
+        #choice-screen {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            padding: 40px;
+            gap: 30px;
+        }
+
+        .choice-card {
+            border: 2px dashed var(--border-hard);
+            border-radius: var(--radius);
+            padding: 50px 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: 0.2s;
+            background: var(--surface-alt);
+        }
+
+        .choice-card:hover {
+            border-color: var(--action-blue);
+            background: rgba(2, 132, 199, 0.05);
+            transform: translateY(-5px);
+        }
+
+        .choice-icon { font-size: 4rem; margin-bottom: 15px; }
+        .choice-title { font-size: 1.5rem; font-weight: bold; color: var(--brand-dark); text-transform: uppercase; }
+
+        /* The Forms */
+        .form-screen { display: none; padding: 40px; max-width: 500px; margin: 0 auto; }
+        
+        .back-btn {
+            background: none; border: none; color: var(--text-muted);
+            font-weight: bold; cursor: pointer; text-transform: uppercase;
+            font-family: var(--font-mono); margin-bottom: 20px; display: inline-block;
+        }
+        .back-btn:hover { color: var(--action-blue); }
+
+        /* Custom Touch PIN Pad */
+        .pin-display {
+            width: 100%; text-align: center; font-size: 2.5rem; letter-spacing: 15px;
+            padding: 20px; border: 2px solid var(--border-hard); border-radius: var(--radius);
+            background: var(--surface-alt); margin-bottom: 20px; font-family: var(--font-mono);
+        }
+
+        .pin-grid {
+            display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
+        }
+
+        .pin-btn {
+            padding: 20px; font-size: 1.8rem; font-weight: bold; background: var(--surface-alt);
+            border: 2px solid var(--border-soft); border-radius: var(--radius); cursor: pointer;
+            transition: 0.1s; color: var(--brand-dark);
+        }
+        .pin-btn:active { background: var(--border-soft); transform: scale(0.95); }
+        .pin-btn-action { background: var(--action-blue); color: white; border-color: var(--action-blue); }
+        .pin-btn-clear { background: var(--status-red); color: white; border-color: var(--status-red); }
+
+        .error-msg {
+            background: #fee2e2; color: #991b1b; padding: 15px; border-radius: var(--radius);
+            border-left: 4px solid var(--status-red); margin-bottom: 20px; font-weight: bold; text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="login-container">
+        <div class="login-header">
+            <h1>Proto-Planner <span style="color: var(--action-blue);">ERP</span></h1>
+            <p>Authorisation Gateway</p>
+        </div>
+
+        {% if messages %}
+            <div style="padding: 0 40px; margin-top: 20px;">
+                {% for message in messages %}
+                    <div class="error-msg">{{ message }}</div>
+                {% endfor %}
+            </div>
+        {% endif %}
+
+        <div id="choice-screen">
+            <div class="choice-card" onclick="showForm('operator')">
+                <div class="choice-icon">🏭</div>
+                <div class="choice-title">Operator Terminal</div>
+                <p style="color: var(--text-muted); font-family: var(--font-mono); margin-top: 10px;">Floor Execution Log-in</p>
+            </div>
+            
+            <div class="choice-card" onclick="showForm('staff')">
+                <div class="choice-icon">📊</div>
+                <div class="choice-title">Control Tower</div>
+                <p style="color: var(--text-muted); font-family: var(--font-mono); margin-top: 10px;">Management & Office Log-in</p>
+            </div>
+        </div>
+
+        <div id="form-operator" class="form-screen">
+            <button class="back-btn" onclick="showChoice()">← Back to Selection</button>
+            <h2 style="margin-bottom: 20px; color: var(--brand-dark); text-align: center;">Enter Operator PIN</h2>
+            
+            <form method="POST" action="{% url 'login' %}">
+                {% csrf_token %}
+                <input type="hidden" name="login_type" value="operator">
+                <input type="password" id="hidden-pin" name="pin_code" required style="display: none;">
+                
+                <div class="pin-display" id="visual-pin">----</div>
+                
+                <div class="pin-grid">
+                    <button type="button" class="pin-btn" onclick="appendPin(1)">1</button>
+                    <button type="button" class="pin-btn" onclick="appendPin(2)">2</button>
+                    <button type="button" class="pin-btn" onclick="appendPin(3)">3</button>
+                    <button type="button" class="pin-btn" onclick="appendPin(4)">4</button>
+                    <button type="button" class="pin-btn" onclick="appendPin(5)">5</button>
+                    <button type="button" class="pin-btn" onclick="appendPin(6)">6</button>
+                    <button type="button" class="pin-btn" onclick="appendPin(7)">7</button>
+                    <button type="button" class="pin-btn" onclick="appendPin(8)">8</button>
+                    <button type="button" class="pin-btn" onclick="appendPin(9)">9</button>
+                    <button type="button" class="pin-btn pin-btn-clear" onclick="clearPin()">CLR</button>
+                    <button type="button" class="pin-btn" onclick="appendPin(0)">0</button>
+                    <button type="submit" class="pin-btn pin-btn-action">ENT</button>
+                </div>
+            </form>
+        </div>
+
+        <div id="form-staff" class="form-screen">
+            <button class="back-btn" onclick="showChoice()">← Back to Selection</button>
+            <h2 style="margin-bottom: 20px; color: var(--brand-dark); text-align: center;">Staff Authorisation</h2>
+            
+            <form method="POST" action="{% url 'login' %}" style="display: flex; flex-direction: column; gap: 15px;">
+                {% csrf_token %}
+                <input type="hidden" name="login_type" value="staff">
+                
+                <div>
+                    <label class="input-label">Username</label>
+                    <input type="text" name="username" required>
+                </div>
+                <div>
+                    <label class="input-label">Password</label>
+                    <input type="password" name="password" required 
+                           style="width: 100%; padding: 12px; font-size: 1.2rem; border: 2px solid var(--border-hard); border-radius: var(--radius); background-color: var(--surface-alt);">
+                </div>
+                
+                <button type="submit" class="btn btn-primary" style="margin-top: 10px;">Log In to Control Tower</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        let currentPin = "";
+        
+        function showForm(type) {
+            document.getElementById('choice-screen').style.display = 'none';
+            if (type === 'operator') {
+                document.getElementById('form-operator').style.display = 'block';
+            } else {
+                document.getElementById('form-staff').style.display = 'block';
+            }
+        }
+
+        function showChoice() {
+            document.getElementById('form-operator').style.display = 'none';
+            document.getElementById('form-staff').style.display = 'none';
+            document.getElementById('choice-screen').style.display = 'grid';
+            clearPin(); // Reset PIN if they go back
+        }
+
+        function appendPin(num) {
+            if (currentPin.length < 4) {
+                currentPin += num;
+                updatePinDisplay();
+            }
+        }
+
+        function clearPin() {
+            currentPin = "";
+            updatePinDisplay();
+        }
+
+        function updatePinDisplay() {
+            document.getElementById('hidden-pin').value = currentPin;
+            let displayStr = currentPin.padEnd(4, '-');
+            // Hide the actual numbers with asterisks for security, but leave dashes
+            let maskedStr = displayStr.split('').map(c => c !== '-' ? '*' : '-').join('');
+            document.getElementById('visual-pin').innerText = maskedStr;
+        }
+    </script>
+</body>
+</html>

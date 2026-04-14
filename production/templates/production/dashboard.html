@@ -19,9 +19,42 @@
             border-bottom: 4px solid var(--action-blue); 
         }
         .dashboard-grid { display: grid; grid-template-columns: 1fr 1.5fr 1fr; gap: 20px; height: calc(100vh - 120px); }
+        .header { 
+            background: var(--brand-dark); padding: 20px; border-radius: var(--radius);
+            display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;
+        }
+        .header h1 { color: #ffffff; font-size: 1.8rem; margin: 0; }
+        .live-tag { color: var(--border-soft); font-family: var(--font-mono); font-weight: bold; font-size: 0.9rem; }
     </style>
 </head>
+
 <body hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
+
+    <nav class="top-nav">
+        <div class="nav-brand">
+            PROTO-PLANNER <span style="color: var(--action-blue);">ERP</span>
+        </div>
+        <div class="nav-links">
+            <a href="/" class="active">Production Terminal</a>
+            <a href="/control-tower/">Control Tower</a>
+        </div>
+        <div class="nav-user">
+            <span>OPERATOR: <strong>{{ request.user.username|default:"GUEST"|upper }}</strong></span>
+            
+            <form method="post" action="{% url 'logout' %}" style="margin: 0; display: inline-block;">
+                {% csrf_token %}
+                <button type="submit" class="btn-logout" style="cursor: pointer; font-family: var(--font-sans);">END SHIFT</button>
+            </form>
+        </div>
+    </nav>
+
+    <div class="header">
+        <h1>Production Terminal</h1>
+        <div style="display: flex; align-items: center; gap: 10px;">
+            <div class="status-dot status-live"></div>
+            <span class="live-tag">SYSTEM ONLINE // SYNCING</span>
+        </div>
+    </div>
 
     <div class="nav-tabs" id="tab-container">
         <button class="tab-btn active" hx-get="/get-extrusion/" hx-target="#form-workspace" hx-swap="innerHTML" onclick="setActiveTab(this)">Extrusion Log</button>

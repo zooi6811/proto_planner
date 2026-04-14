@@ -4,6 +4,20 @@ from decimal import Decimal
 from django.core.validators import MinValueValidator
 from django.utils import timezone
 from django.core.exceptions import ValidationError
+from django.contrib.auth.models import User
+
+class UserProfile(models.Model):
+    ROLE_CHOICES = [
+        ('OPERATOR', 'Floor Operator'),
+        ('STAFF', 'Management / Staff'),
+    ]
+    
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='profile')
+    role = models.CharField(max_length=10, choices=ROLE_CHOICES, default='OPERATOR')
+    pin_code = models.CharField(max_length=4, unique=True, null=True, blank=True, help_text="4-digit PIN for Operator Terminal access")
+
+    def __str__(self):
+        return f"{self.user.username} - {self.get_role_display()}"
 
 # -----------------------------------------------------------------------------
 # MASTER DATA & INVENTORY
