@@ -173,6 +173,18 @@ class JobOrder(models.Model):
         if self.order_quantity_kg > Decimal('0'):
             return round((self.total_extruded_kg / self.order_quantity_kg) * Decimal('100'), 1)
         return Decimal('0')
+    
+    @property
+    def cutting_progress(self):
+        if self.order_quantity_kg > Decimal('0'):
+            return round((self.total_cut_kg / self.order_quantity_kg) * Decimal('100'), 1)
+        return Decimal('0')
+
+    @property
+    def packing_progress(self):
+        if self.order_quantity_kg > Decimal('0'):
+            return round((self.total_packed_kg / self.order_quantity_kg) * Decimal('100'), 1)
+        return Decimal('0')
 
     @property
     def order_balance_kg(self):

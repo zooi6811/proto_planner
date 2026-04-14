@@ -1,6 +1,6 @@
 from django.shortcuts import render, get_object_or_404
 from django.http import HttpResponse
-from django.db.models import F, Q
+from django.db.models import Sum, F, Q
 from django.db import transaction
 from django.core.exceptions import ValidationError
 from django.utils.html import escape
@@ -10,8 +10,9 @@ from .models import (
     MaterialUsageLog, MaterialAllocation, MaterialCategory, 
     ExtrusionSession, SessionMaterial
 )
-import time
+from django.utils import timezone
 import uuid
+from datetime import timedelta
 
 from django.utils.html import escape
 
@@ -518,7 +519,14 @@ def get_extrusion_form(request):
         is_completed=False, 
         order_quantity_kg__gt=F('total_extruded_kg') - F('total_cutting_wastage_kg')
     ).order_by('-id')[:20]
-    return render(request, 'production/partials/extrusion_form.html', {'job_orders': job_orders})
+    
+    # Fetch a flat list of machines that currently have an active session
+    active_machines = ExtrusionSession.objects.filter(status='ACTIVE').values_list('machine_no', flat=True)
+    
+    return render(request, 'production/partials/extrusion_form.html', {
+        'job_orders': job_orders,
+        'active_machines': list(active_machines) # Convert QuerySet to list for easy template checking
+    })
 
 def get_cutting_form(request):
     job_orders = JobOrder.objects.filter(
@@ -556,16 +564,113 @@ def search_jobs(request):
 # DASHBOARD & TOWER LOGIC
 # -----------------------------------------------------------------------------
 def control_tower(request):
+    # 1. TIMEFRAME STATE (Safely intercepting duplicate HTMX params)
+    timeframes = request.GET.getlist('timeframe')
+    timeframe = timeframes[0] if timeframes else 'daily'
+    
+    # 2. ACCORDION EXPANDED STATE
+    expanded_param = request.GET.get('expanded', '')
+    expanded_sections = expanded_param.split(',') if expanded_param else []
+    
+    # 3. JOB TAB STATE
+    job_tabs = request.GET.getlist('job_tab')
+    job_tab = job_tabs[0] if job_tabs else 'active'
+    
+    now = timezone.now()
+    
+    # Calculate Start Dates based on Timeframe
+    if timeframe == 'weekly':
+        start_date = now.date() - timedelta(days=now.weekday()) 
+        label_prefix = "This Week's"
+    elif timeframe == 'monthly':
+        start_date = now.date().replace(day=1)
+        label_prefix = "This Month's"
+    elif timeframe == 'yearly':
+        start_date = now.date().replace(month=1, day=1)
+        label_prefix = "This Year's"
+    else: 
+        start_date = now.date()
+        label_prefix = "Today's"
+
+    # Construct Date Filter
+    if timeframe == 'daily':
+        date_filter = {'timestamp__date': start_date}
+    else:
+        date_filter = {'timestamp__date__gte': start_date}
+
+    # --- ZONE 1: WHAT HAS BEEN DONE (Totals) ---
+    total_extruded = ExtrusionLog.objects.filter(**date_filter).aggregate(
+        total=Sum('roll_weight_kg'))['total'] or Decimal('0')
+        
+    total_cut = CuttingLog.objects.filter(**date_filter).aggregate(
+        total=Sum('output_kg'))['total'] or Decimal('0')
+        
+    total_packed = PackingLog.objects.filter(**date_filter).annotate(
+        weight=F('packing_size_kg') * F('quantity_packed')
+    ).aggregate(total=Sum('weight'))['total'] or Decimal('0')
+
+    # --- ZONE 1.5: THE ADVANCED BREAKDOWNS (Grouped by Job Order) ---
+    extrusion_breakdown = ExtrusionLog.objects.filter(**date_filter).values(
+        jo_num=F('session__job_order__jo_number'),
+        customer=F('session__job_order__customer')
+    ).annotate(total=Sum('roll_weight_kg')).order_by('-total')
+
+    cutting_breakdown = CuttingLog.objects.filter(**date_filter).values(
+        jo_num=F('job_order__jo_number'),
+        customer=F('job_order__customer')
+    ).annotate(total=Sum('output_kg')).order_by('-total')
+
+    packing_breakdown = PackingLog.objects.filter(**date_filter).values(
+        jo_num=F('job_order__jo_number'),
+        customer=F('job_order__customer')
+    ).annotate(total=Sum(F('packing_size_kg') * F('quantity_packed'))).order_by('-total')
+
+    # --- ZONE 2: LIVE MACHINES ---
+    active_machines = ExtrusionSession.objects.filter(status='ACTIVE').select_related('job_order')
+    
+    # --- ZONE 3A: BLOCKERS & ALERTS ---
     low_stock_materials = RawMaterial.objects.filter(current_stock_kg__lte=F('reorder_point_kg'))
     purchasing_shortfalls = MaterialAllocation.objects.filter(shortfall_kg__gt=0, job_order__is_completed=False)
-    active_jobs = JobOrder.objects.filter(is_completed=False).order_by('-id')[:10]
     
+    # --- ZONE 3B: PIPELINE VISIBILITY (Job Tabs) ---
+    # Queued: Not completed, zero extrusion progress. Ordered oldest first.
+    queued_jobs = JobOrder.objects.filter(is_completed=False, total_extruded_kg=0).order_by('id')[:10]
+    
+    # Active: Not completed, extrusion has begun.
+    active_jobs = JobOrder.objects.filter(is_completed=False, total_extruded_kg__gt=0).order_by('-id')[:10]
+    
+    # Completed: Finished jobs. Ordered newest first.
+    completed_jobs = JobOrder.objects.filter(is_completed=True).order_by('-id')[:10]
+
     context = {
+        # Core States
+        'timeframe': timeframe,
+        'expanded_sections': expanded_sections,
+        'expanded_param': expanded_param,
+        'job_tab': job_tab,
+        
+        # Zone 1
+        'label_prefix': label_prefix,
+        'total_extruded': total_extruded,
+        'total_cut': total_cut,
+        'total_packed': total_packed,
+        'extrusion_breakdown': extrusion_breakdown,
+        'cutting_breakdown': cutting_breakdown,
+        'packing_breakdown': packing_breakdown,
+        
+        # Zone 2 & 3A
+        'active_machines': active_machines,
         'low_stock_materials': low_stock_materials,
         'purchasing_shortfalls': purchasing_shortfalls,
+        
+        # Zone 3B
+        'queued_jobs': queued_jobs,
         'active_jobs': active_jobs,
+        'completed_jobs': completed_jobs,
     }
-    if request.htmx:
+    
+    # HTMX partial rendering vs full page load
+    if getattr(request, 'htmx', False):
         return render(request, 'production/partials/tower_content.html', context)
     return render(request, 'production/control_tower.html', context)
 

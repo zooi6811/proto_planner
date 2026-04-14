@@ -10,15 +10,15 @@
                 <label class="input-label">Machine No</label>
                 <select id="extrusion-machine-select" name="machine_no" required style="width: 100%; font-weight: bold; border-color: var(--action-blue);">
                     <option value="" disabled selected>-- Select Machine --</option>
-                    <option value="B1">B1</option>
-                    <option value="B2">B2</option>
-                    <option value="B3">B3</option>
-                    <option value="B4">B4</option>
-                    <option value="B5">B5</option>
-                    <option value="B6">B6</option>
-                    <option value="B7">B7</option>
-                    <option value="B8">B8</option>
-                    <option value="B9">B9</option>
+                    
+                    {% for i in "123456789" %}
+                        {% with machine="B"|add:i %}
+                        <option value="{{ machine }}" {% if machine in active_machines %}style="color: var(--status-green); font-weight: bold;"{% endif %}>
+                            {{ machine }} {% if machine in active_machines %}🟢 (ACTIVE){% endif %}
+                        </option>
+                        {% endwith %}
+                    {% endfor %}
+                    
                 </select>
             </div>
             <div>
@@ -58,8 +58,20 @@
         var waitingState = document.getElementById('extrusion-waiting-state');
         var triggerBtn = document.getElementById('trigger-machine-load');
 
+        // 1. Restore previous terminal setup from the browser's local storage
+        if (localStorage.getItem('terminal_machine')) {
+            machineSelect.value = localStorage.getItem('terminal_machine');
+        }
+        if (localStorage.getItem('terminal_shift')) {
+            shiftSelect.value = localStorage.getItem('terminal_shift');
+        }
+
         function checkSetup() {
             if (machineSelect.value && shiftSelect.value) {
+                // 2. Save the current setup so it survives browser refreshes
+                localStorage.setItem('terminal_machine', machineSelect.value);
+                localStorage.setItem('terminal_shift', shiftSelect.value);
+
                 // Unlock UI
                 waitingState.style.display = 'none';
                 workspace.style.display = 'block';
@@ -75,7 +87,7 @@
         if (machineSelect && shiftSelect) {
             machineSelect.addEventListener('change', checkSetup);
             shiftSelect.addEventListener('change', checkSetup);
-            checkSetup(); // Initial run in case of browser refresh
+            checkSetup(); // Fire immediately on page load
         }
     })();
 </script>

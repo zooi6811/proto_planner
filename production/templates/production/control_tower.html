@@ -10,7 +10,7 @@
             background: var(--brand-dark); padding: 20px; border-radius: var(--radius);
             display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;
         }
-        .header h1 { color: #ffffff; font-size: 1.8rem; }
+        .header h1 { color: #ffffff; font-size: 1.8rem; margin: 0; }
         .live-tag { color: var(--border-soft); font-family: var(--font-mono); font-weight: bold; font-size: 0.9rem; }
     </style>
 </head>
@@ -24,7 +24,7 @@
         </div>
     </div>
 
-    <div hx-get="/control-tower/" hx-trigger="every 10s, load" hx-swap="innerHTML">
+    <div id="tower-container" hx-get="/control-tower/" hx-trigger="every 10s, load" hx-swap="innerHTML" hx-include="input[type='hidden']">
         <div style="text-align: center; padding: 50px; color: var(--border-hard); font-family: var(--font-mono);">
             > ESTABLISHING CONNECTION TO FLOOR TERMINALS...
         </div>

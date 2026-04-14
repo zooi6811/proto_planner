@@ -1,64 +1,307 @@
-<div style="display: grid; grid-template-columns: 1fr 2fr; gap: 20px;">
-    
-    <div style="display: flex; flex-direction: column; gap: 20px;">
-        <div class="panel" style="border-top: 4px solid var(--status-red);">
-            <div class="panel-header">
-                <h2 style="color: var(--status-red);">⚠️ Inventory Alerts</h2>
-            </div>
-            
-            <h3 class="input-label">Low Physical Stock</h3>
-            <ul style="padding-left: 20px; color: var(--text-muted); margin-bottom: 20px;">
-                {% for mat in low_stock_materials %}
-                    <li><strong>{{ mat.name }}</strong>: <span class="text-mono">{{ mat.current_stock_kg }} KG</span> remaining</li>
-                {% empty %}
-                    <li>No active stock warnings.</li>
-                {% endfor %}
-            </ul>
+<div style="display: flex; flex-direction: column; gap: 20px;">
 
-            <h3 class="input-label">Purchasing Required (Shortfalls)</h3>
-            <ul style="padding-left: 20px; color: var(--text-muted);">
-                {% for alloc in purchasing_shortfalls %}
-                    <li><strong>{{ alloc.material.name }}</strong> (JO: {{ alloc.job_order.jo_number }}): <span class="text-mono">{{ alloc.shortfall_kg }} KG</span> needed</li>
-                {% empty %}
-                    <li>No pending purchasing shortfalls.</li>
-                {% endfor %}
-            </ul>
+    <input type="hidden" name="timeframe" value="{{ timeframe }}">
+
+    <div style="display: flex; justify-content: space-between; align-items: flex-end;">
+        <h2 style="color: var(--brand-dark); margin: 0;">Production Volume</h2>
+        
+        <div style="display: flex; gap: 5px; background: var(--border-soft); padding: 4px; border-radius: var(--radius);">
+            <button hx-get="/control-tower/?timeframe=daily" hx-target="#tower-container" 
+                    class="btn {% if timeframe == 'daily' %}btn-primary{% endif %}" 
+                    style="padding: 5px 15px; font-size: 0.85rem; {% if timeframe != 'daily' %}background: transparent; color: var(--text-muted);{% endif %}">Daily</button>
+            
+            <button hx-get="/control-tower/?timeframe=weekly" hx-target="#tower-container" 
+                    class="btn {% if timeframe == 'weekly' %}btn-primary{% endif %}" 
+                    style="padding: 5px 15px; font-size: 0.85rem; {% if timeframe != 'weekly' %}background: transparent; color: var(--text-muted);{% endif %}">Weekly</button>
+            
+            <button hx-get="/control-tower/?timeframe=monthly" hx-target="#tower-container" 
+                    class="btn {% if timeframe == 'monthly' %}btn-primary{% endif %}" 
+                    style="padding: 5px 15px; font-size: 0.85rem; {% if timeframe != 'monthly' %}background: transparent; color: var(--text-muted);{% endif %}">Monthly</button>
+            
+            <button hx-get="/control-tower/?timeframe=yearly" hx-target="#tower-container" 
+                    class="btn {% if timeframe == 'yearly' %}btn-primary{% endif %}" 
+                    style="padding: 5px 15px; font-size: 0.85rem; {% if timeframe != 'yearly' %}background: transparent; color: var(--text-muted);{% endif %}">Yearly</button>
         </div>
     </div>
 
-    <div class="panel" style="border-top: 4px solid var(--action-blue);">
-        <div class="panel-header">
-            <h2 style="color: var(--action-blue);">🏭 Active Factory Jobs</h2>
-        </div>
+    <input type="hidden" name="expanded" id="expanded-state" value="{{ expanded_param }}">
+
+    <style>
+        .kpi-details { background: var(--surface); border: 1px solid var(--border-hard); border-radius: var(--radius); box-shadow: 2px 2px 0px rgba(0,0,0,0.05); }
+        .kpi-details summary { padding: 20px; cursor: pointer; list-style: none; outline: none; }
+        .kpi-details summary::-webkit-details-marker { display: none; }
+        .kpi-details[open] summary { border-bottom: 2px dashed var(--border-soft); }
+        .kpi-table { width: 100%; border-collapse: collapse; text-align: left; font-size: 0.85rem; }
+        .kpi-table th { padding: 10px 20px; color: var(--text-muted); text-transform: uppercase; border-bottom: 1px solid var(--border-hard); }
+        .kpi-table td { padding: 12px 20px; border-bottom: 1px solid var(--border-soft); color: var(--text-primary); }
+        .expand-icon { float: right; font-size: 0.9rem; color: var(--text-muted); transition: transform 0.2s; }
+        .kpi-details[open] .expand-icon { transform: rotate(180deg); }
+    </style>
+
+    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px;">
         
-        <table style="width: 100%; text-align: left; border-collapse: collapse;">
-            <thead>
-                <tr style="border-bottom: 2px solid var(--border-hard);">
-                    <th style="padding: 12px 0; color: var(--text-muted); font-size: 0.85rem; text-transform: uppercase;">JO Number</th>
-                    <th style="padding: 12px 0; color: var(--text-muted); font-size: 0.85rem; text-transform: uppercase;">Customer</th>
-                    <th style="padding: 12px 0; color: var(--text-muted); font-size: 0.85rem; text-transform: uppercase;">Extrusion Progress</th>
-                    <th style="padding: 12px 0; color: var(--text-muted); font-size: 0.85rem; text-transform: uppercase;">Balance (KG)</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for job in active_jobs %}
-                <tr style="border-bottom: 1px solid var(--border-soft);">
-                    <td style="padding: 15px 0; font-weight: bold; color: var(--text-primary);">{{ job.jo_number }}</td>
-                    <td style="padding: 15px 0;">{{ job.customer }}</td>
-                    <td style="padding: 15px 15px 15px 0;">
-                        <div style="background: var(--bg-floor); border-radius: var(--radius); height: 10px; width: 100%; overflow: hidden; border: 1px solid var(--border-soft);">
-                            <div style="background: var(--action-blue); height: 100%; width: {{ job.extrusion_progress }}%;"></div>
-                        </div>
-                        <small class="text-mono" style="color: var(--text-muted); font-weight: bold;">{{ job.extrusion_progress }}%</small>
-                    </td>
-                    <td style="padding: 15px 0;" class="text-mono font-weight-bold">{{ job.order_balance_kg }}</td>
-                </tr>
-                {% empty %}
-                <tr>
-                    <td colspan="4" style="padding: 20px 0; text-align: center; color: var(--text-muted); font-style: italic;">No jobs currently running on the floor.</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+        <details class="kpi-details" id="details-extrusion" style="border-top: 4px solid var(--brand-dark);" {% if 'extrusion' in expanded_sections %}open{% endif %}>
+            <summary style="text-align: center;">
+                <h3 class="input-label">{{ label_prefix }} Extrusion <span class="expand-icon">▼</span></h3>
+                <div class="text-mono" style="font-size: 2.5rem; font-weight: bold; color: var(--text-primary);">
+                    {{ total_extruded }}<span style="font-size: 1rem; color: var(--text-muted);"> KG</span>
+                </div>
+            </summary>
+            <table class="kpi-table">
+                <thead><tr><th>Job Order</th><th style="text-align: right;">Output</th></tr></thead>
+                <tbody>
+                    {% for item in extrusion_breakdown %}
+                    <tr>
+                        <td><strong>{{ item.jo_num }}</strong><br><small style="color: var(--text-muted);">{{ item.customer }}</small></td>
+                        <td style="text-align: right;" class="text-mono"><b>{{ item.total }}</b> KG</td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="2" style="text-align: center; color: var(--text-muted); font-style: italic;">No logs found.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </details>
+
+        <details class="kpi-details" id="details-cutting" style="border-top: 4px solid var(--action-blue);" {% if 'cutting' in expanded_sections %}open{% endif %}>
+            <summary style="text-align: center;">
+                <h3 class="input-label">{{ label_prefix }} Cutting <span class="expand-icon">▼</span></h3>
+                <div class="text-mono" style="font-size: 2.5rem; font-weight: bold; color: var(--text-primary);">
+                    {{ total_cut }}<span style="font-size: 1rem; color: var(--text-muted);"> KG</span>
+                </div>
+            </summary>
+            <table class="kpi-table">
+                <thead><tr><th>Job Order</th><th style="text-align: right;">Output</th></tr></thead>
+                <tbody>
+                    {% for item in cutting_breakdown %}
+                    <tr>
+                        <td><strong>{{ item.jo_num }}</strong><br><small style="color: var(--text-muted);">{{ item.customer }}</small></td>
+                        <td style="text-align: right;" class="text-mono"><b>{{ item.total }}</b> KG</td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="2" style="text-align: center; color: var(--text-muted); font-style: italic;">No logs found.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </details>
+
+        <details class="kpi-details" id="details-packing" style="border-top: 4px solid var(--status-green);" {% if 'packing' in expanded_sections %}open{% endif %}>
+            <summary style="text-align: center;">
+                <h3 class="input-label">{{ label_prefix }} Packing <span class="expand-icon">▼</span></h3>
+                <div class="text-mono" style="font-size: 2.5rem; font-weight: bold; color: var(--text-primary);">
+                    {{ total_packed }}<span style="font-size: 1rem; color: var(--text-muted);"> KG</span>
+                </div>
+            </summary>
+            <table class="kpi-table">
+                <thead><tr><th>Job Order</th><th style="text-align: right;">Output</th></tr></thead>
+                <tbody>
+                    {% for item in packing_breakdown %}
+                    <tr>
+                        <td><strong>{{ item.jo_num }}</strong><br><small style="color: var(--text-muted);">{{ item.customer }}</small></td>
+                        <td style="text-align: right;" class="text-mono"><b>{{ item.total }}</b> KG</td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="2" style="text-align: center; color: var(--text-muted); font-style: italic;">No logs found.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </details>
+    </div>
+
+    <script>
+        (function() {
+            var detailsElements = document.querySelectorAll('.kpi-details');
+            var stateInput = document.getElementById('expanded-state');
+
+            function updateState() {
+                var expanded = [];
+                if (document.getElementById('details-extrusion').open) expanded.push('extrusion');
+                if (document.getElementById('details-cutting').open) expanded.push('cutting');
+                if (document.getElementById('details-packing').open) expanded.push('packing');
+                stateInput.value = expanded.join(',');
+            }
+
+            // Listen for any native toggle event and save it to the hidden input immediately
+            detailsElements.forEach(function(el) {
+                el.addEventListener('toggle', updateState);
+            });
+        })();
+    </script>
+
+    <div style="display: grid; grid-template-columns: 1fr 2fr; gap: 20px;">
+        
+        <div style="display: flex; flex-direction: column; gap: 20px;">
+            
+            <div class="panel" style="border-top: 4px solid var(--status-green);">
+                <div class="panel-header">
+                    <h2 style="color: var(--status-green);">⚙️ Live Machines</h2>
+                </div>
+                <ul style="padding-left: 0; list-style: none; margin: 0;">
+                    {% for session in active_machines %}
+                        <li style="background: var(--surface-alt); padding: 10px; margin-bottom: 10px; border-radius: var(--radius); border-left: 4px solid var(--status-green);">
+                            <div style="font-weight: bold; font-size: 1.1rem;">Machine {{ session.machine_no }}</div>
+                            <div style="color: var(--text-muted); font-size: 0.9rem;">
+                                JO: <span class="text-mono">{{ session.job_order.jo_number }}</span> | {{ session.shift }} Shift
+                            </div>
+                            <div style="margin-top: 5px; font-size: 0.85rem;" class="text-mono">
+                                Output: {{ session.total_output_kg }} / {{ session.target_amount_kg }} KG
+                            </div>
+                        </li>
+                    {% empty %}
+                        <li style="color: var(--text-muted); font-style: italic;">All machines currently offline.</li>
+                    {% endfor %}
+                </ul>
+            </div>
+
+            <div class="panel" style="border-top: 4px solid var(--status-red);">
+                <div class="panel-header">
+                    <h2 style="color: var(--status-red); display: flex; align-items: center; gap: 10px;">
+                        <span class="pulse-alert"></span> Blockers
+                    </h2>
+                </div>
+                
+                <h3 class="input-label">Critical Low Stock</h3>
+                <ul style="padding-left: 20px; color: var(--text-muted); margin-bottom: 20px;">
+                    {% for mat in low_stock_materials %}
+                        <li {% if mat.current_stock_kg <= 0 %}style="color: var(--status-red); font-weight: bold;"{% endif %}>
+                            <strong>{{ mat.name }}</strong>: <span class="text-mono">{{ mat.current_stock_kg }} KG</span> available
+                        </li>
+                    {% empty %}
+                        <li>No active stock warnings.</li>
+                    {% endfor %}
+                </ul>
+
+                <h3 class="input-label">Purchasing Shortfalls</h3>
+                <ul style="padding-left: 20px; color: var(--text-muted);">
+                    {% for alloc in purchasing_shortfalls %}
+                        <li style="margin-bottom: 8px;">
+                            <strong>{{ alloc.material.name }}</strong> (JO: {{ alloc.job_order.jo_number }}): 
+                            <span class="text-mono" style="color: var(--status-red); font-weight: bold;">{{ alloc.shortfall_kg }} KG</span> needed
+                        </li>
+                    {% empty %}
+                        <li>No pending shortfalls.</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+
+        <div class="panel" style="border-top: 4px solid var(--action-blue);">
+            
+            <input type="hidden" name="job_tab" value="{{ job_tab }}">
+
+            <div class="panel-header" style="flex-direction: column; align-items: flex-start; gap: 15px;">
+                <div style="display: flex; justify-content: space-between; width: 100%; align-items: center;">
+                    <h2 style="color: var(--action-blue); margin: 0;">🏭 Factory Jobs</h2>
+                    <small class="text-mono" style="color: var(--border-hard);">Last Sync: {% now "H:i:s" %}</small>
+                </div>
+                
+                <div style="display: flex; gap: 5px; background: var(--surface-alt); padding: 4px; border-radius: var(--radius); border: 1px solid var(--border-soft);">
+                    <button hx-get="/control-tower/?job_tab=queued" hx-target="#tower-container" 
+                            class="btn {% if job_tab == 'queued' %}btn-primary{% endif %}" 
+                            style="padding: 6px 15px; font-size: 0.85rem; {% if job_tab != 'queued' %}background: transparent; color: var(--text-muted);{% endif %}">Queued</button>
+                    
+                    <button hx-get="/control-tower/?job_tab=active" hx-target="#tower-container" 
+                            class="btn {% if job_tab == 'active' %}btn-primary{% endif %}" 
+                            style="padding: 6px 15px; font-size: 0.85rem; {% if job_tab != 'active' %}background: transparent; color: var(--text-muted);{% endif %}">Active</button>
+                    
+                    <button hx-get="/control-tower/?job_tab=completed" hx-target="#tower-container" 
+                            class="btn {% if job_tab == 'completed' %}btn-primary{% endif %}" 
+                            style="padding: 6px 15px; font-size: 0.85rem; {% if job_tab != 'completed' %}background: transparent; color: var(--text-muted);{% endif %}">Completed</button>
+                </div>
+            </div>
+            
+            {% if job_tab == 'queued' %}
+                <table style="width: 100%; text-align: left; border-collapse: collapse;">
+                    <thead>
+                        <tr style="border-bottom: 2px solid var(--border-hard);">
+                            <th style="padding: 12px 0; color: var(--text-muted); font-size: 0.85rem; text-transform: uppercase;">JO Number</th>
+                            <th style="padding: 12px 0; color: var(--text-muted); font-size: 0.85rem; text-transform: uppercase;">Customer</th>
+                            <th style="padding: 12px 0; color: var(--text-muted); font-size: 0.85rem; text-transform: uppercase; text-align: right;">Target (KG)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for job in queued_jobs %}
+                        <tr style="border-bottom: 1px solid var(--border-soft);">
+                            <td style="padding: 15px 0; font-weight: bold; color: var(--text-primary);">{{ job.jo_number }}</td>
+                            <td style="padding: 15px 0; color: var(--text-primary);">{{ job.customer }}</td>
+                            <td style="padding: 15px 0; text-align: right;" class="text-mono font-weight-bold">{{ job.order_quantity_kg }}</td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="3" style="padding: 40px 0; text-align: center; color: var(--text-muted); font-style: italic;">No jobs in the queue.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+
+            {% elif job_tab == 'completed' %}
+                <table style="width: 100%; text-align: left; border-collapse: collapse;">
+                    <thead>
+                        <tr style="border-bottom: 2px solid var(--border-hard);">
+                            <th style="padding: 12px 0; color: var(--text-muted); font-size: 0.85rem; text-transform: uppercase;">JO Number</th>
+                            <th style="padding: 12px 0; color: var(--text-muted); font-size: 0.85rem; text-transform: uppercase;">Customer</th>
+                            <th style="padding: 12px 0; color: var(--text-muted); font-size: 0.85rem; text-transform: uppercase; text-align: right;">Final Output (KG)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for job in completed_jobs %}
+                        <tr style="border-bottom: 1px solid var(--border-soft);">
+                            <td style="padding: 15px 0; font-weight: bold; color: var(--text-primary);">{{ job.jo_number }}</td>
+                            <td style="padding: 15px 0; color: var(--text-primary);">{{ job.customer }}</td>
+                            <td style="padding: 15px 0; text-align: right; color: var(--status-green);" class="text-mono font-weight-bold">{{ job.total_packed_kg }}</td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="3" style="padding: 40px 0; text-align: center; color: var(--text-muted); font-style: italic;">No completed jobs found.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+
+            {% else %}
+                <table style="width: 100%; text-align: left; border-collapse: collapse;">
+                    <thead>
+                        <tr style="border-bottom: 2px solid var(--border-hard);">
+                            <th style="padding: 12px 0; color: var(--text-muted); font-size: 0.85rem; text-transform: uppercase;">JO Number</th>
+                            <th style="padding: 12px 0; color: var(--text-muted); font-size: 0.85rem; text-transform: uppercase;">Extrusion</th>
+                            <th style="padding: 12px 0; color: var(--text-muted); font-size: 0.85rem; text-transform: uppercase;">Cutting</th>
+                            <th style="padding: 12px 0; color: var(--text-muted); font-size: 0.85rem; text-transform: uppercase;">Packing</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for job in active_jobs %}
+                        <tr style="border-bottom: 1px solid var(--border-soft);">
+                            <td style="padding: 15px 0; font-weight: bold; color: var(--text-primary);">
+                                {{ job.jo_number }}<br>
+                                <small style="color: var(--text-muted); font-weight: normal;">{{ job.customer }}</small>
+                            </td>
+                            
+                            <td style="padding: 15px 15px 15px 0; width: 25%;">
+                                <div style="background: var(--bg-floor); border-radius: var(--radius); height: 8px; width: 100%; overflow: hidden; border: 1px solid var(--border-soft);">
+                                    <div style="background: var(--brand-dark); height: 100%; width: {{ job.extrusion_progress }}%;"></div>
+                                </div>
+                                <small class="text-mono" style="color: var(--text-muted);">{{ job.extrusion_progress }}%</small>
+                            </td>
+
+                            <td style="padding: 15px 15px 15px 0; width: 25%;">
+                                <div style="background: var(--bg-floor); border-radius: var(--radius); height: 8px; width: 100%; overflow: hidden; border: 1px solid var(--border-soft);">
+                                    <div style="background: var(--action-blue); height: 100%; width: {{ job.cutting_progress }}%;"></div>
+                                </div>
+                                <small class="text-mono" style="color: var(--text-muted);">{{ job.cutting_progress }}%</small>
+                            </td>
+
+                            <td style="padding: 15px 15px 15px 0; width: 25%;">
+                                <div style="background: var(--bg-floor); border-radius: var(--radius); height: 8px; width: 100%; overflow: hidden; border: 1px solid var(--border-soft);">
+                                    <div style="background: var(--status-green); height: 100%; width: {{ job.packing_progress }}%;"></div>
+                                </div>
+                                <small class="text-mono" style="color: var(--text-muted);">{{ job.packing_progress }}%</small>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="4" style="padding: 40px 0; text-align: center; color: var(--text-muted); font-style: italic;">
+                                No active jobs on the floor.
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            {% endif %}
+        </div>
     </div>
 </div>
