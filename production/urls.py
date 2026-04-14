@@ -8,7 +8,8 @@ urlpatterns = [
     
     # The crucial logout override (notice the next_page parameter)
     path('logout/', LogoutView.as_view(next_page='login'), name='logout'),
-    
+    path('register/', views.register_user, name='register_user'),
+
     # Main Dashboards
     path('', views.operator_dashboard, name='dashboard'),
     path('control-tower/', views.control_tower, name='control_tower'),

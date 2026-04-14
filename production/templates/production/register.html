@@ -1,0 +1,56 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Register | Proto-Planner ERP</title>
+    <link rel="stylesheet" href="{% static 'css/industrial.css' %}?v=2">
+</head>
+<body>
+    <div class="panel" style="max-width: 600px; margin: 40px auto; border-top: 6px solid var(--action-blue);">
+        <div class="panel-header">
+            <h2>Register New Personnel</h2>
+        </div>
+        
+        {% if messages %}
+            {% for message in messages %}
+                <div style="background: #fee2e2; color: #991b1b; padding: 15px; border-left: 4px solid var(--status-red); margin-bottom: 15px;">{{ message }}</div>
+            {% endfor %}
+        {% endif %}
+
+        <form method="POST" action="{% url 'register_user' %}">
+            {% csrf_token %}
+            <div style="display: flex; flex-direction: column; gap: 15px;">
+                <div>
+                    <label class="input-label">Username</label>
+                    <input type="text" name="username" required>
+                </div>
+                <div>
+                    <label class="input-label">Password (Initial)</label>
+                    <input type="password" name="password" required>
+                </div>
+                <div>
+                    <label class="input-label">Role</label>
+                    <select name="role" id="role-select" required>
+                        <option value="OPERATOR">Floor Operator</option>
+                        <option value="STAFF">Management / Staff</option>
+                    </select>
+                </div>
+                <div id="pin-container">
+                    <label class="input-label">Operator PIN (4 Digits)</label>
+                    <input type="text" name="pin_code" maxlength="4" pattern="\d{4}" placeholder="e.g. 1234">
+                </div>
+                <button type="submit" class="btn btn-primary" style="margin-top: 20px;">Confirm Registration</button>
+                <a href="{% url 'control_tower' %}" style="text-align: center; color: var(--text-muted); text-decoration: none; font-weight: bold; margin-top: 10px;">Return to Control Tower</a>
+            </div>
+        </form>
+    </div>
+
+    <script>
+        const roleSelect = document.getElementById('role-select');
+        const pinContainer = document.getElementById('pin-container');
+        roleSelect.addEventListener('change', (e) => {
+            pinContainer.style.display = e.target.value === 'OPERATOR' ? 'block' : 'none';
+        });
+    </script>
+</body>
+</html>

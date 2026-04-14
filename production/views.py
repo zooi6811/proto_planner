@@ -6,7 +6,7 @@ from django.core.exceptions import ValidationError
 from django.utils.html import escape
 from decimal import Decimal, InvalidOperation
 from .models import (JobOrder, ExtrusionLog, CuttingLog, PackingLog, RawMaterial, 
-    MaterialUsageLog, MaterialAllocation, MaterialCategory, 
+    MaterialUsageLog, MaterialAllocation, MaterialCategory, UserProfile,
     ExtrusionSession, SessionMaterial)
 from django.utils import timezone
 import uuid
@@ -15,32 +15,28 @@ from django.utils.html import escape
 from django.contrib.auth import authenticate, login as django_login
 from django.contrib import messages
 from .models import UserProfile
-from django.contrib.auth.decorators import login_required
+from django.contrib.auth.decorators import login_required, user_passes_test
 from django.contrib.auth import logout as django_logout
+from django.contrib.auth.models import User
 
 def gateway_login(request):
-    # If already logged in, route them away from the login page
     if request.user.is_authenticated:
         if hasattr(request.user, 'profile') and request.user.profile.role == 'STAFF':
-            return redirect('control_tower') # Ensure you have a url named 'control_tower'
-        return redirect('dashboard') # Ensure you have a url named 'dashboard'
+            return redirect('control_tower')
+        return redirect('dashboard')
 
     if request.method == 'POST':
         login_type = request.POST.get('login_type')
 
-        # 1. Handle Operator PIN Log-in
         if login_type == 'operator':
             pin = request.POST.get('pin_code')
             try:
-                # Find the profile with this exact PIN
                 profile = UserProfile.objects.get(pin_code=pin, role='OPERATOR')
-                # Log the associated user in
                 django_login(request, profile.user)
                 return redirect('dashboard')
             except UserProfile.DoesNotExist:
                 messages.error(request, "Invalid Operator PIN.")
 
-        # 2. Handle Staff Username/Password Log-in
         elif login_type == 'staff':
             username = request.POST.get('username')
             password = request.POST.get('password')
@@ -48,7 +44,6 @@ def gateway_login(request):
             
             if user is not None:
                 django_login(request, user)
-                # Check if they have a profile; default to operator terminal if not strictly STAFF
                 if hasattr(user, 'profile') and user.profile.role == 'STAFF':
                     return redirect('control_tower')
                 return redirect('dashboard')
@@ -56,6 +51,29 @@ def gateway_login(request):
                 messages.error(request, "Invalid credentials or unauthorised access.")
 
     return render(request, 'production/login.html')
+
+# @user_passes_test(lambda u: u.is_staff)
+def register_user(request):
+    if request.method == 'POST':
+        username = request.POST.get('username')
+        password = request.POST.get('password')
+        role = request.POST.get('role')
+        pin_code = request.POST.get('pin_code')
+
+        if role == 'OPERATOR' and (not pin_code or not pin_code.isdigit() or len(pin_code) != 4):
+            messages.error(request, "Operators must have a valid 4-digit PIN.")
+        elif User.objects.filter(username=username).exists():
+            messages.error(request, "Username already exists.")
+        elif role == 'OPERATOR' and UserProfile.objects.filter(pin_code=pin_code).exists():
+            messages.error(request, "That PIN is already assigned to another operator.")
+        else:
+            with transaction.atomic():
+                user = User.objects.create_user(username=username, password=password)
+                UserProfile.objects.create(user=user, role=role, pin_code=pin_code if role == 'OPERATOR' else None)
+            messages.success(request, f"User {username} successfully registered.")
+            return redirect('control_tower')
+            
+    return render(request, 'production/register.html')
 
 def get_toast_popup(message, alert_type="error", use_oob=True):
     """
