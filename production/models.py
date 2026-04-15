@@ -98,6 +98,11 @@ class RecipeItem(models.Model):
 class JobOrder(models.Model):
     jo_number = models.CharField(max_length=20, unique=True)
     customer = models.CharField(max_length=100)
+
+    queue_position = models.PositiveIntegerField(
+        default=100, 
+        help_text="Lower numbers run first (e.g., 1 is top priority). Use 100 for standard/un-queued jobs."
+    )
     
     # Digital Production Form Specifications
     po_number = models.CharField(max_length=50, blank=True, default="-")
@@ -124,6 +129,9 @@ class JobOrder(models.Model):
     total_shipped_kg = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     is_completed = models.BooleanField(default=False, help_text="Mark as true when the entire order is finished.")
 
+    class Meta:
+        ordering = ['is_completed', 'queue_position', 'target_delivery_date']
+        
     def save(self, *args, **kwargs):
         is_new = self.pk is None
         

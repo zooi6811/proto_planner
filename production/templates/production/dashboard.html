@@ -37,6 +37,9 @@
         <div class="nav-links">
             <a href="/" class="active">Production Terminal</a>
             <a href="/control-tower/">Production Status</a>
+            {% if request.user.is_staff %}
+                <a href="/admin/" target="_blank" style="color: #ff9800;">Admin Panel ↗</a>
+            {% endif %}
         </div>
         <div class="nav-user">
             <span>OPERATOR: <strong>{{ request.user.username|default:"GUEST"|upper }}</strong></span>
