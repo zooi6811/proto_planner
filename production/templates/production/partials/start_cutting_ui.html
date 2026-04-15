@@ -1,0 +1,40 @@
+<form hx-post="{% url 'start_cutting_session' %}" hx-target="body" hx-swap="beforeend" hx-include="#cutting-shift-select" hx-disabled-elt="find button[type='submit']" style="width: 100%;">
+    {% csrf_token %}
+    <input type="hidden" name="machine_no" value="{{ machine_no }}">
+    
+    <div class="panel-header" style="border-bottom: 2px solid var(--border-soft); padding-bottom: 15px; margin-bottom: 20px;">
+        <h2 style="color: var(--action-blue); margin: 0;">Configure Run: Machine {{ machine_no }}</h2>
+    </div>
+
+    <div style="display: grid; grid-template-columns: 1fr 1.5fr; gap: 30px;">
+        
+        <div style="border-right: 2px solid var(--border-soft); padding-right: 30px;">
+            <h3 style="margin-top: 0; color: var(--text-muted); font-size: 1rem; margin-bottom: 15px;">SELECT JOB ORDER</h3>
+            <input type="text" name="q" placeholder="Search Pending Jobs..." 
+                   hx-get="{% url 'search_jobs' %}?dept=cutting" 
+                   hx-target="#cutting-jo-list" 
+                   hx-trigger="keyup changed delay:300ms, search"
+                   style="width: 100%; border: 1px solid var(--border-hard); padding: 8px 12px; border-radius: 4px; margin-bottom: 15px;">
+            
+            <div id="cutting-jo-list" style="max-height: 400px; overflow-y: auto; border-top: 1px dashed var(--border-soft); padding-top: 10px;">
+                {% include 'production/partials/job_radio_list.html' %}
+            </div>
+        </div>
+
+        <div>
+            <div id="job-specs-container"></div>
+            
+            <div style="background: var(--bg-floor); padding: 20px; border-radius: var(--radius); border: 1px solid var(--border-soft); margin-top: 20px;">
+                <div style="margin-bottom: 20px;">
+                    <label class="input-label">Mount Extruded Roll (KG)</label>
+                    <input type="number" name="input_roll_weight" required placeholder="0.00" class="text-mono" step="0.01" style="width: 100%;">
+                    <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 5px;">Input the exact weight of the printed/extruded roll placed onto the cutting machine.</p>
+                </div>
+                
+                <button type="submit" class="btn btn-success" style="width: 100%; padding: 12px; font-weight: bold;">
+                    START CUTTING
+                </button>
+            </div>
+        </div>
+    </div>
+</form>

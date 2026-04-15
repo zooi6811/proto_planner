@@ -19,6 +19,12 @@ urlpatterns = [
     path('get-cutting/', views.get_cutting_form, name='get_cutting'),
     path('get-packing/', views.get_packing_form, name='get_packing'),
 
+    path('load-cutting-state/', views.load_cutting_state, name='load_cutting_state'),
+    path('load-cutting-state/<str:machine_no>/', views.load_cutting_state, name='load_cutting_state_machine'),
+    path('start-cutting-session/', views.start_cutting_session, name='start_cutting_session'),
+    path('log-cut-roll/', views.log_cut_roll, name='log_cut_roll'),
+    path('stop-cutting-session/<int:session_id>/', views.stop_cutting_session, name='stop_cutting_session'),
+
     # Stateful Extrusion Sessions (Bulletproofed against 301s)
     # The regex allows 'machine_no' to be natively captured whilst remaining tolerant of empty paths
     re_path(r'^load-machine-state(?:/(?P<machine_no>[A-Za-z0-9_-]+))?/?$', views.load_machine_state, name='load_machine_state'),
@@ -27,7 +33,6 @@ urlpatterns = [
     re_path(r'^stop-session/(?P<session_id>\d+)/?$', views.stop_extrusion_session, name='stop_session'),
 
     # Form Submissions (Immune to the HTMX Trailing Slash POST Trap)
-    re_path(r'^submit-cutting/?$', views.submit_cutting, name='submit_cutting'),
     re_path(r'^submit-packing/?$', views.submit_packing, name='submit_packing'),
     re_path(r'^submit-material-usage/?$', views.submit_material_usage, name='submit_material_usage'), # Restored missing route
 

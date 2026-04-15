@@ -2,7 +2,7 @@ from django.contrib import admin
 from .models import (
     UserProfile, MaterialCategory, RawMaterial, MaterialRestockLog, Recipe, RecipeItem,
     JobOrder, MaterialAllocation, MaterialUsageLog, ExtrusionSession,
-    SessionMaterial, ExtrusionLog, CuttingLog, PackingLog, DispatchLog
+    SessionMaterial, ExtrusionLog, CuttingLog, PackingLog, DispatchLog, CuttingSession
 )
 
 # -----------------------------------------------------------------------------
@@ -138,7 +138,7 @@ class JobOrderAdmin(admin.ModelAdmin):
         for job in queryset:
             job.complete_job()
         self.message_user(request, f"{queryset.count()} job orders successfully processed and completed.")
-        
+
 # @admin.register(MaterialUsageLog)
 # class MaterialUsageLogAdmin(admin.ModelAdmin):
 #     list_display = ('job_order', 'material', 'amount_kg', 'is_substitution', 'operator_name', 'timestamp')
@@ -172,13 +172,28 @@ class ExtrusionLogAdmin(admin.ModelAdmin):
     readonly_fields = ('timestamp',)
     autocomplete_fields = ['session']
 
+# -----------------------------------------------------------------------------
+# CUTTING LOGS & SESSIONS ADMIN
+# -----------------------------------------------------------------------------
+class CuttingLogInline(admin.TabularInline):
+    model = CuttingLog
+    extra = 0
+    readonly_fields = ('timestamp',)
+
+@admin.register(CuttingSession)
+class CuttingSessionAdmin(admin.ModelAdmin):
+    list_display = ('machine_no', 'job_order', 'shift', 'status', 'input_roll_weight_kg', 'total_output_kg', 'total_wastage_kg')
+    list_filter = ('status', 'shift', 'machine_no')
+    search_fields = ('machine_no', 'job_order__jo_number', 'operator_name')
+    readonly_fields = ('total_output_kg', 'total_wastage_kg', 'start_time', 'end_time')
+    inlines = [CuttingLogInline]
+    autocomplete_fields = ['job_order']
+
 @admin.register(CuttingLog)
 class CuttingLogAdmin(admin.ModelAdmin):
-    list_display = ('job_order', 'machine_no', 'shift', 'output_kg', 'wastage_kg', 'operator_name')
-    list_filter = ('shift', 'machine_no')
-    search_fields = ('job_order__jo_number', 'operator_name')
+    list_display = ('session', 'output_kg', 'timestamp')
     readonly_fields = ('timestamp',)
-    autocomplete_fields = ['job_order']
+    autocomplete_fields = ['session']
 
 @admin.register(PackingLog)
 class PackingLogAdmin(admin.ModelAdmin):

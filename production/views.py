@@ -6,7 +6,7 @@ from django.core.exceptions import ValidationError
 from django.utils.html import escape
 from decimal import Decimal, InvalidOperation
 from .models import (JobOrder, ExtrusionLog, CuttingLog, PackingLog, RawMaterial, 
-    MaterialUsageLog, MaterialAllocation, MaterialCategory, UserProfile,
+    MaterialUsageLog, MaterialAllocation, MaterialCategory, UserProfile, CuttingSession,
     ExtrusionSession, SessionMaterial)
 from django.utils import timezone
 import uuid
@@ -124,9 +124,6 @@ def has_logging_permission(user):
     
     # Always allow standard Django backend admins and superusers
     if user.is_staff or user.is_superuser:
-        return False
-    
-    if user.is_superuser:
         return True
         
     # ONLY allow dedicated factory floor operators (Block the custom 'STAFF' viewer role)
@@ -409,109 +406,133 @@ def stop_extrusion_session(request, session_id):
     return HttpResponse(warning_toast + soft_refresh)
 
 # -----------------------------------------------------------------------------
-# CUTTING SUBMISSION
+# CUTTING SESSIONS & SUBMISSION
 # -----------------------------------------------------------------------------
-def submit_cutting(request):
-    if not has_logging_permission(request.user):
-        return HttpResponse(get_toast_popup("Unauthorised: Only Operators and Admins can log cutting output.", "error", use_oob=False))
+
+def load_cutting_state(request, machine_no=None):
+    if not machine_no:
+        machine_no = request.GET.get('machine_no')
+        
+    if not machine_no:
+        return HttpResponse("<p style='color: var(--text-muted); font-weight: bold; text-transform: uppercase;'>Awaiting Machine Selection...</p>")
+
+    active_session = CuttingSession.objects.filter(machine_no=machine_no, status='ACTIVE').first()
     
+    if active_session:
+        return render(request, 'production/partials/active_cutting_ui.html', {'session': active_session})
+    else:
+        # Load priority queue for cutting
+        job_orders = JobOrder.objects.filter(
+            is_completed=False,
+            total_extruded_kg__gt=F('total_cut_kg') + F('total_cutting_wastage_kg')
+        ).order_by('queue_position', 'target_delivery_date', 'id')[:20]
+        
+        return render(request, 'production/partials/start_cutting_ui.html', {
+            'machine_no': machine_no, 
+            'job_orders': job_orders,
+            'dept': 'cutting'
+        })
+
+def start_cutting_session(request):
+    """Locks the cutting machine and logs the input roll."""
+    if not has_logging_permission(request.user):
+        return HttpResponse(get_toast_popup("Unauthorised: Only Operators can start sessions.", "error", use_oob=False))
+        
     if request.method == "POST":
         jo_id = request.POST.get('job_order')
+        machine_no = request.POST.get('machine_no')
+        shift = request.POST.get('shift')
         
-        def reload_with_error(error_text):
-            return HttpResponse(get_toast_popup(error_text, "error", use_oob=False))
+        def reload_with_error(msg):
+            return HttpResponse(get_toast_popup(msg, "error", use_oob=False))
 
         if not jo_id:
-            return reload_with_error("Please select an active job from the list first.")
+            return reload_with_error("Please select a Job Order from the list.")
 
-        output_kg = parse_decimal(request.POST.get('output_kg'))
-        wastage = parse_decimal(request.POST.get('wastage')) or Decimal('0')
-
-        if output_kg is None or output_kg <= Decimal('0') or wastage < Decimal('0'):
-            return reload_with_error("Invalid input. Weights must be proper, positive numbers.")
+        input_roll = parse_decimal(request.POST.get('input_roll_weight'))
+        if input_roll is None or input_roll <= Decimal('0'):
+            return reload_with_error("Invalid input roll weight. Must be greater than zero.")
             
-        if output_kg > Decimal('2000'): 
-            return reload_with_error(f"{output_kg}kg exceeds the maximum allowed limit for a single entry. Check for typos.")
-
         job_order = get_object_or_404(JobOrder, id=jo_id)
 
-        if job_order.is_completed:
-            return reload_with_error("This Job Order is already closed or completed.")
+        if job_order.is_completed: 
+            return reload_with_error("This Job Order is already completed.")
+            
+        remaining_extruded = job_order.total_extruded_kg - job_order.total_cut_kg - job_order.total_cutting_wastage_kg
+        if input_roll > (remaining_extruded * Decimal('1.05')):
+            return reload_with_error(f"Cannot mount {input_roll}kg roll. Only {remaining_extruded:.1f}kg remains from Extrusion.")
         
-        remaining_to_cut = job_order.total_extruded_kg - job_order.total_cut_kg
-        
-        if output_kg > (remaining_to_cut * Decimal('1.05')):
-            return reload_with_error(f"Cannot log {output_kg}kg. Only {remaining_to_cut:.1f}kg remains from Extrusion.")
-
         operator = request.user.username if request.user.is_authenticated else "Unknown Operator"
 
         try:
-            CuttingLog.objects.create(
-                job_order=job_order,
-                machine_no=request.POST.get('machine'),
-                shift=request.POST.get('shift'),
-                output_kg=output_kg,
-                wastage_kg=wastage,
-                operator_name=operator
+            session = CuttingSession.objects.create(
+                job_order=job_order, machine_no=machine_no, shift=shift, 
+                input_roll_weight_kg=input_roll, operator_name=operator
             )
+        except ValidationError as e:
+            return reload_with_error(str(e))
+
+        success_toast = get_toast_popup(f"Session locked on Cut Machine {machine_no}.", "success", use_oob=False)
+        soft_refresh = f"<script>htmx.ajax('GET', '/load-cutting-state/{machine_no}/', {{target: '#cutting-workspace'}});</script>"
+        return HttpResponse(success_toast + soft_refresh)
+
+def log_cut_roll(request):
+    """Logs the good output from the active cutting session."""
+    if not has_logging_permission(request.user):
+        return HttpResponse(get_toast_popup("Unauthorised: Only Operators can log output.", "error", use_oob=False))
+        
+    if request.method == "POST":
+        session_id = request.POST.get('session_id')
+
+        def reload_with_error(msg):
+            return HttpResponse(get_toast_popup(msg, "error", use_oob=False))
+
+        if not session_id:
+            return reload_with_error("No active session found.")
+            
+        session = get_object_or_404(CuttingSession, id=session_id)
+
+        if session.status != 'ACTIVE':
+            return reload_with_error("This machine session is no longer active.")
+        
+        output_kg = parse_decimal(request.POST.get('output_kg'))
+        
+        if output_kg is None or output_kg <= Decimal('0'):
+            return reload_with_error("Output weight must be strictly greater than zero.")
+
+        try:
+            CuttingLog.objects.create(session=session, output_kg=output_kg)
         except ValidationError as e:
             error_msg = " ".join(e.messages) if hasattr(e, 'messages') else str(e)
             return reload_with_error(error_msg)
+        
+        session.refresh_from_db() 
+        
+        if session.status == 'COMPLETED':
+            success_msg = get_toast_popup(f"Roll finished! Wastage automatically calculated as {session.total_wastage_kg}kg.", "success", use_oob=False)
+        else:
+            success_msg = get_toast_popup(f"Successfully logged {output_kg}kg of cut goods.", "success", use_oob=False)
             
-        job_order.refresh_from_db()
-        
-        # 1. The Fading Success Toast
-        success_toast = get_toast_popup(f"Successfully logged {output_kg}kg for {job_order.jo_number}.", "success", use_oob=False)
-        
-        # Determine if there is any material left to cut
-        is_target_reached = str(job_order.total_cut_kg >= job_order.total_extruded_kg).lower()
-
-        # 2. The Smart Soft Refresh Script
-        soft_refresh_script = f"""
+        soft_refresh = f"""
         <script>
             var out = document.querySelector('input[name="output_kg"]'); if(out) out.value='';
-            var wst = document.querySelector('input[name="wastage"]'); if(wst) wst.value='';
-            
-            var searchInput = document.querySelector('input[name="q"]');
-            if (searchInput) {{ 
-                var url = searchInput.getAttribute('hx-get');
-                var targetId = searchInput.getAttribute('hx-target').replace('#', '');
-                var query = searchInput.value || '';
-                
-                // Listen for the exact moment the HTMX list update finishes
-                var swapListener = function(e) {{
-                    if (e.detail.target.id === targetId) {{
-                        var radio = document.getElementById('jo_{job_order.id}');
-                        var targetReached = {is_target_reached};
-                        
-                        // If the job is still active, re-select it and pull the fresh specs!
-                        if (radio && !targetReached) {{
-                            radio.checked = true;
-                            fetch(`/get-job-specs/{job_order.id}/?dept=cutting`)
-                                .then(response => response.text())
-                                .then(html => {{
-                                    var specContainer = document.getElementById('job-specs-container');
-                                    if (specContainer) specContainer.innerHTML = html;
-                                }});
-                        }} else {{
-                            // Only wipe the screen if the job is truly finished
-                            var specContainer = document.getElementById('job-specs-container');
-                            if (specContainer) {{
-                                specContainer.innerHTML = '<div style="padding: 40px 20px; text-align: center; color: var(--text-muted); border: 2px dashed var(--border-soft); border-radius: var(--radius); margin-bottom: 20px;"><div style="font-size: 2.5rem; margin-bottom: 15px; opacity: 0.5;">✅</div><p style="font-weight: bold; text-transform: uppercase; margin: 0; font-size: 1.1rem;">Target Reached</p><p style="font-size: 0.9rem; color: var(--border-hard); margin-top: 8px;">Select a new job to continue.</p></div>';
-                            }}
-                            var progressBar = document.getElementById('active-progress-bar');
-                            if (progressBar) progressBar.innerHTML = '';
-                        }}
-                        document.body.removeEventListener('htmx:afterSwap', swapListener);
-                    }}
-                }};
-                document.body.addEventListener('htmx:afterSwap', swapListener);
-                htmx.ajax('GET', url + '&q=' + encodeURIComponent(query), {{target: '#' + targetId}}); 
-            }}
+            htmx.ajax('GET', '/load-cutting-state/{session.machine_no}/', {{target: '#cutting-workspace'}});
         </script>
         """
-        return HttpResponse(success_toast + soft_refresh_script)
+        return HttpResponse(success_msg + soft_refresh)
+
+def stop_cutting_session(request, session_id):
+    """Operator terminates the cutting session early."""
+    if not has_logging_permission(request.user):
+        return HttpResponse(get_toast_popup("Unauthorised action.", "error", use_oob=False))
+        
+    session = get_object_or_404(CuttingSession, id=session_id)
+    session.stop_session(calculate_wastage=False)
     
+    warning_toast = get_toast_popup(f"Cutting Session on Machine {session.machine_no} ended early. Wastage deferred.", "warning", use_oob=False)
+    soft_refresh = f"<script>htmx.ajax('GET', '/load-cutting-state/{session.machine_no}/', {{target: '#cutting-workspace'}});</script>"
+    return HttpResponse(warning_toast + soft_refresh)
+
 # -----------------------------------------------------------------------------
 # PACKING SUBMISSION
 # -----------------------------------------------------------------------------
@@ -638,11 +659,8 @@ def get_extrusion_form(request):
 
 @login_required(login_url='login')
 def get_cutting_form(request):
-    job_orders = JobOrder.objects.filter(
-        is_completed=False,
-        total_extruded_kg__gt=F('total_cut_kg') + F('total_cutting_wastage_kg')
-    ).order_by('queue_position', 'target_delivery_date', 'id')[:20]
-    return render(request, 'production/partials/cutting_form.html', {'job_orders': job_orders, 'dept': 'cutting'})
+    active_machines = CuttingSession.objects.filter(status='ACTIVE').values_list('machine_no', flat=True)
+    return render(request, 'production/partials/cutting_form.html', {'active_machines': list(active_machines), 'dept': 'cutting'})
 
 @login_required(login_url='login')
 def get_packing_form(request):
@@ -729,9 +747,10 @@ def control_tower(request):
         customer=F('session__job_order__customer')
     ).annotate(total=Sum('roll_weight_kg')).order_by('-total')
 
+    # We now route through the 'session' relationship to find the job order details
     cutting_breakdown = CuttingLog.objects.filter(**date_filter).values(
-        jo_num=F('job_order__jo_number'),
-        customer=F('job_order__customer')
+        jo_num=F('session__job_order__jo_number'),
+        customer=F('session__job_order__customer')
     ).annotate(total=Sum('output_kg')).order_by('-total')
 
     packing_breakdown = PackingLog.objects.filter(**date_filter).values(
@@ -741,9 +760,10 @@ def control_tower(request):
 
     # Live Operational Context
     active_machines = ExtrusionSession.objects.filter(status='ACTIVE').select_related('job_order')
+    active_cutting_machines = CuttingSession.objects.filter(status='ACTIVE').select_related('job_order') # Added this line
     low_stock_materials = RawMaterial.objects.filter(current_stock_kg__lte=F('reorder_point_kg'))
     purchasing_shortfalls = MaterialAllocation.objects.filter(shortfall_kg__gt=0, job_order__is_completed=False)
-    
+
     # Factory Pipeline Tiers
     active_jobs = JobOrder.objects.filter(
         Q(extrusion_sessions__status='ACTIVE') | Q(total_extruded_kg__gt=0),
@@ -770,6 +790,7 @@ def control_tower(request):
         'cutting_breakdown': cutting_breakdown,
         'packing_breakdown': packing_breakdown,
         'active_machines': active_machines,
+        'active_cutting_machines': active_cutting_machines,
         'low_stock_materials': low_stock_materials,
         'purchasing_shortfalls': purchasing_shortfalls,
         'queued_jobs': queued_jobs,

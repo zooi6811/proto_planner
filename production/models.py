@@ -131,7 +131,7 @@ class JobOrder(models.Model):
 
     class Meta:
         ordering = ['is_completed', 'queue_position', 'target_delivery_date']
-        
+
     def save(self, *args, **kwargs):
         is_new = self.pk is None
         
@@ -376,31 +376,86 @@ class ExtrusionLog(models.Model):
             if session.total_output_kg >= session.target_amount_kg:
                 session.stop_session()
 
-class CuttingLog(models.Model):
-    job_order = models.ForeignKey(JobOrder, on_delete=models.CASCADE, related_name='cutting_logs')
+class CuttingSession(models.Model):
+    job_order = models.ForeignKey(JobOrder, on_delete=models.CASCADE, related_name='cutting_sessions')
     machine_no = models.CharField(max_length=10)
     shift = models.CharField(max_length=10, choices=[('AM', 'Morning'), ('PM', 'Night')])
-    timestamp = models.DateTimeField(auto_now_add=True)
     operator_name = models.CharField(max_length=50, null=True, blank=True)
     
+    input_roll_weight_kg = models.DecimalField(max_digits=10, decimal_places=2, help_text="Weight of the roll loaded onto the machine")
+    
+    status = models.CharField(max_length=20, default='ACTIVE', choices=[('ACTIVE', 'Active'), ('COMPLETED', 'Completed'), ('ENDED_EARLY', 'Ended Early')])
+    
+    start_time = models.DateTimeField(auto_now_add=True)
+    end_time = models.DateTimeField(null=True, blank=True)
+    
+    total_output_kg = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    total_wastage_kg = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+
+    def stop_session(self, calculate_wastage=True):
+        """Terminates the session and handles wastage calculation."""
+        if self.status != 'ACTIVE':
+            return
+            
+        with transaction.atomic():
+            self.end_time = timezone.now()
+            
+            if calculate_wastage:
+                wastage = self.input_roll_weight_kg - self.total_output_kg
+                if wastage > Decimal('0'):
+                    self.total_wastage_kg = wastage
+                    
+                    # Cascade the calculated wastage up to the Job Order
+                    JobOrder.objects.filter(pk=self.job_order.pk).update(
+                        total_cutting_wastage_kg=F('total_cutting_wastage_kg') + self.total_wastage_kg
+                    )
+                self.status = 'COMPLETED'
+            else:
+                self.status = 'ENDED_EARLY'
+                
+            self.save(update_fields=['status', 'end_time', 'total_wastage_kg'])
+
+    def __str__(self):
+        return f"Cut Machine {self.machine_no} | JO: {self.job_order.jo_number} ({self.status})"
+
+
+class CuttingLog(models.Model):
+    session = models.ForeignKey(CuttingSession, on_delete=models.CASCADE, related_name='logs', null=True, blank=True)
+    timestamp = models.DateTimeField(auto_now_add=True)
+    
+    # We no longer need machine, shift, operator, or wastage_kg here as the Session handles it!
     output_kg = models.DecimalField(max_digits=8, decimal_places=2, validators=[MinValueValidator(Decimal('0.01'))])
-    wastage_kg = models.DecimalField(max_digits=8, decimal_places=2, default=0, validators=[MinValueValidator(Decimal('0'))])
 
     def clean(self):
-        if self.job_order_id:
-            remaining = self.job_order.total_extruded_kg - self.job_order.total_cut_kg
+        if self.session_id:
+            remaining = self.session.input_roll_weight_kg - self.session.total_output_kg
+            # Allow a tiny 5% buffer for scale miscalibration
             if self.pk is None and self.output_kg > (remaining * Decimal('1.05')):
-                raise ValidationError({'output_kg': f'Cannot cut {self.output_kg}kg. Only {remaining:.1f}kg remains from Extrusion.'})
+                raise ValidationError({'output_kg': f'Cannot log {self.output_kg}kg. Only {remaining:.1f}kg remains on this roll.'})
 
     def save(self, *args, **kwargs):
         self.clean()
         is_new = self.pk is None
         super().save(*args, **kwargs)
+        
         if is_new:
-            JobOrder.objects.filter(pk=self.job_order.pk).update(
-                total_cut_kg=F('total_cut_kg') + self.output_kg,
-                total_cutting_wastage_kg=F('total_cutting_wastage_kg') + self.wastage_kg
+            session = self.session
+            
+            # 1. Add output to the Session
+            CuttingSession.objects.filter(pk=session.pk).update(
+                total_output_kg=F('total_output_kg') + self.output_kg
             )
+            
+            # 2. Add output to the main Job Order
+            JobOrder.objects.filter(pk=session.job_order.pk).update(
+                total_cut_kg=F('total_cut_kg') + self.output_kg
+            )
+            
+            # 3. Check if the roll is fully consumed
+            session.refresh_from_db()
+            if session.total_output_kg >= session.input_roll_weight_kg:
+                # If output matches or exceeds input, complete it (wastage will calculate as 0)
+                session.stop_session(calculate_wastage=True)
 
 class PackingLog(models.Model):
     job_order = models.ForeignKey(JobOrder, on_delete=models.CASCADE, related_name='packing_logs')

@@ -131,19 +131,41 @@
                     <h2 style="color: var(--status-green);">⚙️ Live Machines</h2>
                 </div>
                 <ul style="padding-left: 0; list-style: none; margin: 0;">
+                    
+                    {% if not active_machines and not active_cutting_machines %}
+                        <li style="color: var(--text-muted); font-style: italic;">All machines currently offline.</li>
+                    {% endif %}
+
                     {% for session in active_machines %}
-                        <li style="background: var(--surface-alt); padding: 10px; margin-bottom: 10px; border-radius: var(--radius); border-left: 4px solid var(--status-green);">
-                            <div style="font-weight: bold; font-size: 1.1rem;">Machine {{ session.machine_no }}</div>
-                            <div style="color: var(--text-muted); font-size: 0.9rem;">
+                        <li style="background: var(--surface-alt); padding: 10px; margin-bottom: 10px; border-radius: var(--radius); border-left: 4px solid var(--brand-dark);">
+                            <div style="font-weight: bold; font-size: 1.1rem; display: flex; justify-content: space-between; align-items: center;">
+                                <span>Machine {{ session.machine_no }}</span>
+                                <span style="font-size: 0.7rem; background: var(--brand-dark); color: white; padding: 2px 6px; border-radius: 4px; letter-spacing: 0.5px;">EXTRUSION</span>
+                            </div>
+                            <div style="color: var(--text-muted); font-size: 0.9rem; margin-top: 5px;">
                                 JO: <span class="text-mono">{{ session.job_order.jo_number }}</span> | {{ session.shift }} Shift
                             </div>
                             <div style="margin-top: 5px; font-size: 0.85rem;" class="text-mono">
                                 Output: {{ session.total_output_kg }} / {{ session.target_amount_kg }} KG
                             </div>
                         </li>
-                    {% empty %}
-                        <li style="color: var(--text-muted); font-style: italic;">All machines currently offline.</li>
                     {% endfor %}
+
+                    {% for session in active_cutting_machines %}
+                        <li style="background: var(--surface-alt); padding: 10px; margin-bottom: 10px; border-radius: var(--radius); border-left: 4px solid var(--action-blue);">
+                            <div style="font-weight: bold; font-size: 1.1rem; display: flex; justify-content: space-between; align-items: center;">
+                                <span>Machine {{ session.machine_no }}</span>
+                                <span style="font-size: 0.7rem; background: var(--action-blue); color: white; padding: 2px 6px; border-radius: 4px; letter-spacing: 0.5px;">CUTTING</span>
+                            </div>
+                            <div style="color: var(--text-muted); font-size: 0.9rem; margin-top: 5px;">
+                                JO: <span class="text-mono">{{ session.job_order.jo_number }}</span> | {{ session.shift }} Shift
+                            </div>
+                            <div style="margin-top: 5px; font-size: 0.85rem;" class="text-mono">
+                                Output: {{ session.total_output_kg }} / {{ session.input_roll_weight_kg }} KG
+                            </div>
+                        </li>
+                    {% endfor %}
+
                 </ul>
             </div>
 
