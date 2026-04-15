@@ -75,8 +75,16 @@
                 // Unlock UI
                 waitingState.style.display = 'none';
                 workspace.style.display = 'block';
-                // Automatically fetch the machine dashboard from the backend
-                triggerBtn.click(); 
+                
+                // 3. THE FIX: Delay the HTMX trigger slightly. 
+                // Inline scripts run before HTMX has finished wiring up the new HTML. 
+                // This tiny 50ms timeout guarantees the button is "alive" before we trigger it.
+                setTimeout(function() {
+                    if (typeof htmx !== 'undefined') {
+                        htmx.trigger(triggerBtn, 'click');
+                    }
+                }, 50);
+
             } else {
                 // Lock UI
                 waitingState.style.display = 'block';
@@ -87,7 +95,9 @@
         if (machineSelect && shiftSelect) {
             machineSelect.addEventListener('change', checkSetup);
             shiftSelect.addEventListener('change', checkSetup);
-            checkSetup(); // Fire immediately on page load
+            
+            // Fire the initial check with a delay to completely bypass page-load race conditions
+            setTimeout(checkSetup, 50); 
         }
     })();
 </script>

@@ -116,6 +116,24 @@ def parse_decimal(value):
         return Decimal(str(value).strip())
     except (InvalidOperation, ValueError, TypeError):
         return None
+    
+def has_logging_permission(user):
+    """Checks if a user has the authority to log production data."""
+    if not user.is_authenticated:
+        return False
+    
+    # Always allow standard Django backend admins and superusers
+    if user.is_staff or user.is_superuser:
+        return False
+    
+    if user.is_superuser:
+        return True
+        
+    # ONLY allow dedicated factory floor operators (Block the custom 'STAFF' viewer role)
+    if hasattr(user, 'profile') and user.profile.role == 'OPERATOR':
+        return True
+    
+    return False
 
 # -----------------------------------------------------------------------------
 # MATERIAL USAGE SUBMISSION
@@ -161,6 +179,9 @@ def get_materials_by_category(request):
 
 def submit_material_usage(request):
     """Submits ad-hoc material usage, triggering relevant visual alerts."""
+    if not has_logging_permission(request.user):
+        return HttpResponse(get_toast_popup("Unauthorised: Only Operators and Admins can log material usage.", "error"))
+    
     if request.method == "POST":
         jo_id = request.POST.get('job_order')
         material_id = request.POST.get('material_id')
@@ -247,6 +268,9 @@ def load_machine_state(request, machine_no=None):
     
 def start_extrusion_session(request):
     """Locks the machine, reserves the material, and starts the job."""
+    if not has_logging_permission(request.user):
+        return HttpResponse(get_toast_popup("Unauthorised: Only Operators and Admins can start sessions.", "error", use_oob=False))
+    
     if request.method == "POST":
         jo_id = request.POST.get('job_order')
         machine_no = request.POST.get('machine_no')
@@ -320,6 +344,9 @@ def start_extrusion_session(request):
     
 def log_session_roll(request):
     """Operator logs a roll to their currently active session."""
+    if not has_logging_permission(request.user):
+        return HttpResponse(get_toast_popup("Unauthorised: Only Operators and Admins can log rolls.", "error", use_oob=False))
+    
     if request.method == "POST":
         session_id = request.POST.get('session_id')
 
@@ -370,6 +397,9 @@ def log_session_roll(request):
 
 def stop_extrusion_session(request, session_id):
     """Operator manually terminates the job early."""
+    if not has_logging_permission(request.user):
+        return HttpResponse(get_toast_popup("Unauthorised: Only Operators and Admins can terminate sessions.", "error", use_oob=False))
+    
     session = get_object_or_404(ExtrusionSession, id=session_id)
     session.stop_session()
     
@@ -382,6 +412,9 @@ def stop_extrusion_session(request, session_id):
 # CUTTING SUBMISSION
 # -----------------------------------------------------------------------------
 def submit_cutting(request):
+    if not has_logging_permission(request.user):
+        return HttpResponse(get_toast_popup("Unauthorised: Only Operators and Admins can log cutting output.", "error", use_oob=False))
+    
     if request.method == "POST":
         jo_id = request.POST.get('job_order')
         
@@ -483,6 +516,9 @@ def submit_cutting(request):
 # PACKING SUBMISSION
 # -----------------------------------------------------------------------------
 def submit_packing(request):
+    if not has_logging_permission(request.user):
+        return HttpResponse(get_toast_popup("Unauthorised: Only Operators and Admins can log packed goods.", "error", use_oob=False))
+    
     if request.method == "POST":
         jo_id = request.POST.get('job_order')
         
