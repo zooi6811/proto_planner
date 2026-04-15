@@ -4,6 +4,7 @@
     <title>Live Production Status</title>
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
     <script src="https://unpkg.com/htmx.org/dist/ext/django-htmx.js"></script>
+    <script src="https://unpkg.com/htmx.org/dist/ext/ws.js"></script>
     <link rel="stylesheet" href="/static/css/industrial.css">
     <style>
         .header { 
@@ -14,7 +15,8 @@
         .live-tag { color: var(--border-soft); font-family: var(--font-mono); font-weight: bold; font-size: 0.9rem; }
     </style>
 </head>
-<body hx-ext="django-htmx">
+<body hx-ext="django-htmx, ws" ws-connect="/ws/live/">
+    <div id="ws-bridge"></div>
     <nav class="top-nav">
         <div class="nav-brand">
             PROTO-PLANNER <span style="color: var(--action-blue);">ERP</span>
@@ -44,7 +46,7 @@
         </div>
     </div>
 
-    <div id="tower-container" hx-get="/control-tower/" hx-trigger="every 10s, load" hx-swap="innerHTML" hx-include="input[type='hidden']">
+    <div id="tower-container" hx-get="/control-tower/" hx-trigger="load, factory-update from:body" hx-swap="innerHTML" hx-include="input[type='hidden']">
         <div style="text-align: center; padding: 50px; color: var(--border-hard); font-family: var(--font-mono);">
             > ESTABLISHING CONNECTION TO FLOOR TERMINALS...
         </div>

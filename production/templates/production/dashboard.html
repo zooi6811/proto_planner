@@ -4,6 +4,7 @@
 <head>
     <title>Production Terminal</title>
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script src="https://unpkg.com/htmx.org/dist/ext/ws.js"></script>
     <link rel="stylesheet" href="{% static 'css/industrial.css' %}">
     <style>
         /* Specific layout for the terminal */
@@ -28,7 +29,28 @@
     </style>
 </head>
 
-<body hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
+<body hx-ext="django-htmx, ws" ws-connect="/ws/live/">
+    <div id="ws-bridge"></div>
+
+    <script>
+        // Listen for the native HTMX WebSocket event
+        document.body.addEventListener('htmx:wsAfterMessage', function(e) {
+            
+            // Find the active search bar (which inherently knows the current department and target)
+            var searchInput = document.querySelector('input[name="q"]');
+            
+            if (searchInput) {
+                var url = searchInput.getAttribute('hx-get');
+                var targetId = searchInput.getAttribute('hx-target');
+                var query = searchInput.value || '';
+                
+                if (url && targetId) {
+                    // Directly command HTMX to fetch the freshly sorted queue and swap it in quietly
+                    htmx.ajax('GET', url + '&q=' + encodeURIComponent(query), {target: targetId});
+                }
+            }
+        });
+    </script>
 
     <nav class="top-nav">
         <div class="nav-brand">

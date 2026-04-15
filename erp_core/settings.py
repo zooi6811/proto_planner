@@ -31,6 +31,7 @@ ALLOWED_HOSTS = []
 # Application definition
 
 INSTALLED_APPS = [
+    'daphne',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -127,3 +128,12 @@ STATICFILES_DIRS = [
 # Authentication Routing
 LOGIN_URL = 'login'
 LOGOUT_REDIRECT_URL = 'login'
+
+# --- WEBSOCKET CONFIGURATION ---
+ASGI_APPLICATION = 'erp_core.asgi.application'
+
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels.layers.InMemoryChannelLayer"
+    }
+}
