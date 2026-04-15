@@ -201,8 +201,18 @@ def submit_material_usage(request):
 
 @login_required(login_url='login')
 def operator_dashboard(request):
-    job_orders = JobOrder.objects.all()
-    return render(request, 'production/dashboard.html', {'job_orders': job_orders})
+    # The default tab is Extrusion, so we must load the properly sorted Extrusion queue initially
+    job_orders = JobOrder.objects.filter(
+        is_completed=False, 
+        order_quantity_kg__gt=F('total_extruded_kg') - F('total_cutting_wastage_kg')
+    ).order_by('queue_position', 'target_delivery_date', 'id')[:20]
+    
+    active_machines = ExtrusionSession.objects.filter(status='ACTIVE').values_list('machine_no', flat=True)
+    
+    return render(request, 'production/dashboard.html', {
+        'job_orders': job_orders,
+        'active_machines': list(active_machines)
+    })
 
 # -----------------------------------------------------------------------------
 # STATEFUL EXTRUSION SESSIONS
@@ -219,10 +229,11 @@ def load_machine_state(request, machine_no=None):
     if active_session:
         return render(request, 'production/partials/active_run_ui.html', {'session': active_session})
     else:
+        # FIX: Ensure the priority queue ordering is applied to the machine workspace dropdown!
         job_orders = JobOrder.objects.filter(
             is_completed=False, 
             order_quantity_kg__gt=F('total_extruded_kg') - F('total_cutting_wastage_kg')
-        ).order_by('-id')[:20]
+        ).order_by('queue_position', 'target_delivery_date', 'id')[:20]
         
         categories = MaterialCategory.objects.all().order_by('name')
         initial_row_id = str(uuid.uuid4())[:8]
@@ -576,17 +587,17 @@ def submit_packing(request):
 # -----------------------------------------------------------------------------
 @login_required(login_url='login')
 def get_extrusion_form(request):
+    # Notice the order_by now prioritises queue_position first!
     job_orders = JobOrder.objects.filter(
         is_completed=False, 
         order_quantity_kg__gt=F('total_extruded_kg') - F('total_cutting_wastage_kg')
-    ).order_by('-id')[:20]
+    ).order_by('queue_position', 'target_delivery_date', 'id')[:20]
     
-    # Fetch a flat list of machines that currently have an active session
     active_machines = ExtrusionSession.objects.filter(status='ACTIVE').values_list('machine_no', flat=True)
     
     return render(request, 'production/partials/extrusion_form.html', {
         'job_orders': job_orders,
-        'active_machines': list(active_machines) # Convert QuerySet to list for easy template checking
+        'active_machines': list(active_machines)
     })
 
 @login_required(login_url='login')
@@ -594,7 +605,7 @@ def get_cutting_form(request):
     job_orders = JobOrder.objects.filter(
         is_completed=False,
         total_extruded_kg__gt=F('total_cut_kg') + F('total_cutting_wastage_kg')
-    ).order_by('-id')[:20]
+    ).order_by('queue_position', 'target_delivery_date', 'id')[:20]
     return render(request, 'production/partials/cutting_form.html', {'job_orders': job_orders, 'dept': 'cutting'})
 
 @login_required(login_url='login')
@@ -602,7 +613,7 @@ def get_packing_form(request):
     job_orders = JobOrder.objects.filter(
         is_completed=False,
         total_cut_kg__gt=F('total_packed_kg')
-    ).order_by('-id')[:20]
+    ).order_by('queue_position', 'target_delivery_date', 'id')[:20]
     return render(request, 'production/partials/packing_form.html', {'job_orders': job_orders, 'dept': 'packing'})
 
 def search_jobs(request):
@@ -620,6 +631,9 @@ def search_jobs(request):
         
     if query:
         jobs = jobs.filter(Q(jo_number__icontains=query) | Q(customer__icontains=query))
+        
+    # Ensure search results also respect the priority queue!
+    jobs = jobs.order_by('queue_position', 'target_delivery_date', 'id')
         
     return render(request, 'production/partials/job_radio_list.html', {'job_orders': jobs[:20], 'dept': dept})
 
@@ -703,7 +717,7 @@ def control_tower(request):
     queued_jobs = JobOrder.objects.filter(
         is_completed=False, 
         total_extruded_kg=0
-    ).exclude(extrusion_sessions__status='ACTIVE').order_by('id')[:10]
+    ).exclude(extrusion_sessions__status='ACTIVE').order_by('queue_position', 'target_delivery_date', 'id')[:10]
     
     completed_jobs = JobOrder.objects.filter(is_completed=True).order_by('-id')[:10]
 

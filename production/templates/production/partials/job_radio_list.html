@@ -1,28 +1,60 @@
 <style>
-    /* Visually hide the radio input, but keep it accessible for form submission */
     .radio-btn { position: absolute; opacity: 0; pointer-events: none; }
     .radio-label { 
-        display: block; padding: 12px 15px; margin-bottom: 10px; cursor: pointer; transition: 0.1s;
+        display: block; padding: 15px; margin-bottom: 10px; cursor: pointer; transition: 0.2s ease;
         background-color: var(--surface); border: 2px solid var(--border-soft); border-radius: var(--radius); 
+        position: relative; overflow: hidden;
     }
-    .radio-label:hover { border-color: var(--border-hard); }
+    .radio-label:hover { border-color: var(--border-hard); transform: translateY(-2px); }
+    
     .radio-btn:checked + .radio-label { 
         background-color: var(--surface-alt); border-color: var(--action-blue); 
         box-shadow: inset 4px 0 0 var(--action-blue);
     }
+
+    /* Urgent Job Styling */
+    .urgent-job {
+        border-color: #ff5722 !important;
+        background-color: rgba(255, 87, 34, 0.05);
+    }
+    .radio-btn:checked + .urgent-job {
+        box-shadow: inset 4px 0 0 #ff5722;
+        background-color: rgba(255, 87, 34, 0.1);
+    }
 </style>
 
 <div style="max-height: 400px; overflow-y: auto; padding-right: 10px;">
+    
+    <div style="margin-bottom: 15px; padding-bottom: 10px; border-bottom: 1px dashed var(--border-soft); color: var(--text-muted); font-size: 0.85rem; text-transform: uppercase;">
+        <strong>Production Queue</strong> // Sorted by Priority
+    </div>
+
     {% for jo in job_orders %}
     <div>
         <input type="radio" name="job_order" value="{{ jo.id }}" id="jo_{{ jo.id }}" 
                class="radio-btn spec-trigger" data-dept="{{ dept }}" required>
         
-        <label for="jo_{{ jo.id }}" class="radio-label">
-            <div style="font-weight: bold; font-size: 1.1rem; color: var(--text-primary);">{{ jo.jo_number }}</div>
-            <div style="color: var(--text-muted); font-size: 0.9rem; margin-top: 2px;">{{ jo.customer }}</div>
-            <div class="text-mono" style="font-size: 0.8rem; color: var(--action-blue); margin-top: 5px; font-weight: bold;">
-                TARGET: {{ jo.order_quantity_kg }} KG
+        <label for="jo_{{ jo.id }}" class="radio-label {% if jo.queue_position <= 5 %}urgent-job{% endif %}">
+            
+            {% if jo.queue_position <= 5 %}
+                <div style="background: #ff5722; color: white; padding: 4px 10px; font-size: 0.75rem; font-weight: bold; margin: -15px -15px 10px -15px; text-align: center; letter-spacing: 1px;">
+                    URGENT PRIORITY: #{{ jo.queue_position }}
+                </div>
+            {% elif jo.queue_position < 100 %}
+                <div style="background: var(--border-hard); color: white; padding: 4px 10px; font-size: 0.75rem; font-weight: bold; margin: -15px -15px 10px -15px; text-align: center; letter-spacing: 1px;">
+                    QUEUE POSITION: #{{ jo.queue_position }}
+                </div>
+            {% endif %}
+
+            <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                <div>
+                    <div style="font-weight: bold; font-size: 1.1rem; color: var(--text-primary);">{{ jo.jo_number }}</div>
+                    <div style="color: var(--text-muted); font-size: 0.9rem; margin-top: 2px;">{{ jo.customer }}</div>
+                </div>
+                
+                <div class="text-mono" style="font-size: 0.85rem; color: var(--action-blue); font-weight: bold; text-align: right;">
+                    TARGET<br>{{ jo.order_quantity_kg }} KG
+                </div>
             </div>
         </label>
     </div>
@@ -34,15 +66,12 @@
 </div>
 
 <script>
-    // Ensure we only attach this listener once, even if HTMX swaps the list
     if (!window.specListenerAttached) {
         document.addEventListener('change', function(e) {
-            // Event delegation catches dynamically loaded radio buttons
             if (e.target && e.target.classList.contains('spec-trigger')) {
                 const joId = e.target.value;
                 const dept = e.target.dataset.dept || '';
 
-                // Standard fetch bypasses all HTMX form inheritance traps
                 fetch(`/get-job-specs/${joId}/?dept=${dept}`)
                     .then(response => response.text())
                     .then(html => {
