@@ -157,20 +157,43 @@ class SessionMaterialInline(admin.TabularInline):
     readonly_fields = ('actual_used_kg',)
     autocomplete_fields = ['material']
 
+# 1. New Inline for the Extrusion Rolls
+class ExtrusionLogInline(admin.TabularInline):
+    model = ExtrusionLog
+    extra = 0
+    # Explicitly defining fields forces them to display in this exact order
+    fields = ('roll_weight_kg', 'wastage_kg', 'timestamp')
+    readonly_fields = ('timestamp',)
+    verbose_name = "Extrusion Roll Log"
+    verbose_name_plural = "Extrusion Roll Logs"
+
 @admin.register(ExtrusionSession)
 class ExtrusionSessionAdmin(admin.ModelAdmin):
-    list_display = ('machine_no', 'job_order', 'shift', 'status', 'target_amount_kg', 'total_output_kg')
+    # Added unaccounted_variance_kg to the main table view
+    list_display = ('machine_no', 'job_order', 'shift', 'status', 'target_amount_kg', 'total_output_kg', 'unaccounted_variance_kg')
     list_filter = ('status', 'shift', 'machine_no')
     search_fields = ('machine_no', 'job_order__jo_number', 'operator_name')
-    readonly_fields = ('total_output_kg', 'total_wastage_kg', 'start_time', 'end_time')
-    inlines = [SessionMaterialInline]
+    
+    # Expose all the new phase 3 metrics as read-only so managers can audit closures
+    readonly_fields = (
+        'total_output_kg', 
+        'total_wastage_kg', 
+        'returned_material_kg', 
+        'final_wastage_kg', 
+        'unaccounted_variance_kg', 
+        'transferred_to_next_job_kg', 
+        'start_time', 
+        'end_time'
+    )
+    
+    inlines = [SessionMaterialInline, ExtrusionLogInline]
     autocomplete_fields = ['job_order']
 
-@admin.register(ExtrusionLog)
-class ExtrusionLogAdmin(admin.ModelAdmin):
-    list_display = ('session', 'roll_weight_kg', 'wastage_kg', 'timestamp')
-    readonly_fields = ('timestamp',)
-    autocomplete_fields = ['session']
+# @admin.register(ExtrusionLog)
+# class ExtrusionLogAdmin(admin.ModelAdmin):
+#     list_display = ('session', 'roll_weight_kg', 'wastage_kg', 'timestamp')
+#     readonly_fields = ('timestamp',)
+#     autocomplete_fields = ['session']
 
 # -----------------------------------------------------------------------------
 # CUTTING LOGS & SESSIONS ADMIN
@@ -189,11 +212,11 @@ class CuttingSessionAdmin(admin.ModelAdmin):
     inlines = [CuttingLogInline]
     autocomplete_fields = ['job_order']
 
-@admin.register(CuttingLog)
-class CuttingLogAdmin(admin.ModelAdmin):
-    list_display = ('session', 'output_kg', 'timestamp')
-    readonly_fields = ('timestamp',)
-    autocomplete_fields = ['session']
+# @admin.register(CuttingLog)
+# class CuttingLogAdmin(admin.ModelAdmin):
+#     list_display = ('session', 'output_kg', 'timestamp')
+#     readonly_fields = ('timestamp',)
+#     autocomplete_fields = ['session']
 
 @admin.register(PackingLog)
 class PackingLogAdmin(admin.ModelAdmin):

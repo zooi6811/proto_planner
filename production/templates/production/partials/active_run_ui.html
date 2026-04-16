@@ -3,7 +3,7 @@
         <h2 style="color: var(--status-green); display: flex; align-items: center; gap: 10px;">
             <div class="status-dot status-live"></div> ACTIVE RUN: MACHINE {{ session.machine_no }}
         </h2>
-        <span style="font-weight: bold; color: var(--text-muted);">SHIFT: {{ session.shift }}</span>
+        <span style="font-weight: bold; color: var(--text-muted);">SHIFT: {{ session.shift }} | OP: {{ session.operator_name }}</span>
     </div>
 
     <div style="margin-bottom: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
@@ -46,27 +46,92 @@
 
     <div id="feedback-container" style="margin-bottom: 20px;"></div>
 
-    <div style="display: flex; justify-content: space-between; align-items: center; padding-top: 20px; border-top: 2px dashed var(--border-soft);">
-        
-        <button hx-post="{% url 'stop_extrusion_session' session.id %}" 
-                hx-target="body" 
-                hx-swap="beforeend"
-                hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
-                hx-confirm="End this session early? This marks the job as incomplete." 
-                hx-disabled-elt="this"
-                class="btn" style="background-color: var(--status-red); color: white; font-size: 0.9rem; padding: 10px 15px; border: none; cursor: pointer;">
-            TERMINATE SESSION EARLY
-        </button>
+    <style>
+        .action-panel { background: var(--surface-alt); border: 1px solid var(--border-soft); border-radius: var(--radius); margin-bottom: 10px; overflow: hidden; }
+        .action-summary { padding: 15px; font-weight: bold; cursor: pointer; list-style: none; display: flex; justify-content: space-between; align-items: center; }
+        .action-summary::-webkit-details-marker { display: none; }
+        .action-content { padding: 15px; border-top: 1px solid var(--border-soft); background: var(--bg-floor); }
+    </style>
 
-        <button hx-post="{% url 'complete_extrusion_session' session.id %}" 
-                hx-target="body" 
-                hx-swap="beforeend"
-                hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
-                hx-confirm="Are you sure you want to successfully complete this extrusion run?"
-                class="btn" 
-                style="background-color: var(--status-green); color: white; padding: 15px 25px; font-size: 1.1rem; font-weight: bold; border: none; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-            COMPLETE JOB
-        </button>
-        
+    <div style="border-top: 2px dashed var(--border-soft); padding-top: 20px;">
+        <h3 style="font-size: 0.9rem; color: var(--text-muted); margin-bottom: 15px; text-transform: uppercase;">Session Management</h3>
+
+        <details class="action-panel">
+            <summary class="action-summary" style="color: var(--action-blue);">
+                <span>🤝 Handover Shift (Keep Machine Running)</span> <span>▼</span>
+            </summary>
+            <form hx-post="{% url 'handover_extrusion_shift' session.id %}" hx-target="body" hx-swap="beforeend" class="action-content">
+                {% csrf_token %}
+                <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 10px;">Pass this active session to the next operator without stopping the machine.</p>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
+                    <input type="text" name="operator_name" placeholder="New Operator Name/PIN" required>
+                    <select name="shift" required>
+                        <option value="" disabled selected>Select Next Shift</option>
+                        <option value="AM">Morning (AM)</option>
+                        <option value="PM">Night (PM)</option>
+                    </select>
+                </div>
+                <button type="submit" class="btn" style="width: 100%; background: var(--action-blue); color: white;">EXECUTE HANDOVER</button>
+            </form>
+        </details>
+
+        <details class="action-panel">
+            <summary class="action-summary" style="color: var(--brand-dark);">
+                <span>🔄 Rollover Hopper (Start Next Job)</span> <span>▼</span>
+            </summary>
+            <form hx-post="{% url 'rollover_extrusion_session' session.id %}" hx-target="body" hx-swap="beforeend" class="action-content">
+                {% csrf_token %}
+                <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 10px;">Close this job and transfer all remaining hopper material to a new Job Order.</p>
+                <select name="next_job_order_id" required style="width: 100%; margin-bottom: 15px;">
+                    <option value="" disabled selected>-- Select Upcoming Job --</option>
+                    {% for job in queued_jobs %}
+                        <option value="{{ job.id }}">{{ job.jo_number }} - {{ job.customer }}</option>
+                    {% endfor %}
+                </select>
+                <button type="submit" class="btn" style="width: 100%; background: var(--brand-dark); color: white;">TRANSFER & START NEW JOB</button>
+            </form>
+        </details>
+
+        <details class="action-panel">
+            <summary class="action-summary" style="color: var(--status-red);">
+                <span>🛑 Purge & Close Machine (Empty Hopper)</span> <span>▼</span>
+            </summary>
+            <form hx-post="{% url 'purge_and_close_session' session.id %}" hx-target="body" hx-swap="beforeend" class="action-content">
+                {% csrf_token %}
+                <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 15px;">You must declare all leftover material to balance the ledger before ending.</p>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+                    <div>
+                        <label class="input-label" style="color: var(--status-green);">Clean Return (KG)</label>
+                        <input type="number" name="returned_material_kg" step="0.01" min="0" value="0" class="text-mono" required>
+                        <small style="color: var(--text-muted); font-size: 0.75rem;">Going back to warehouse</small>
+                    </div>
+                    <div>
+                        <label class="input-label" style="color: var(--status-red);">Final Scrap/Purge (KG)</label>
+                        <input type="number" name="final_wastage_kg" step="0.01" min="0" value="0" class="text-mono" required>
+                        <small style="color: var(--text-muted); font-size: 0.75rem;">Going into the bin</small>
+                    </div>
+                </div>
+
+                <div style="display: flex; gap: 10px;">
+                    <button type="submit" class="btn" style="flex: 2; background: var(--status-red); color: white;">CLOSE & VERIFY BALANCES</button>
+                    <button type="submit" name="submit_with_discrepancy" value="true" class="btn" style="flex: 1; background: var(--status-orange); color: white; font-size: 0.8rem;" hx-confirm="WARNING: This will flag a variance alert to management. Are you sure you cannot find the missing material?">FORCE W/ DISCREPANCY</button>
+                </div>
+            </form>
+        </details>
     </div>
 </div>
+
+<script>
+    // UX Script: Only allow one accordion to be open at a time
+    const details = document.querySelectorAll('.action-panel');
+    details.forEach((targetDetail) => {
+        targetDetail.addEventListener('click', () => {
+            details.forEach((detail) => {
+                if (detail !== targetDetail) {
+                    detail.removeAttribute('open');
+                }
+            });
+        });
+    });
+</script>

@@ -120,6 +120,7 @@ class JobOrder(models.Model):
     wastage_buffer_percent = models.DecimalField(max_digits=5, decimal_places=2, default=10.00)
     order_quantity_kg = models.DecimalField(max_digits=10, decimal_places=2)
     total_est_material_kg = models.DecimalField(max_digits=10, decimal_places=2, editable=False, default=0)
+    total_extrusion_wastage_kg = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
     total_cutting_wastage_kg = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     total_extruded_kg = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     total_cut_kg = models.DecimalField(max_digits=10, decimal_places=2, default=0)
@@ -307,34 +308,26 @@ class ExtrusionSession(models.Model):
     total_output_kg = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     total_wastage_kg = models.DecimalField(max_digits=10, decimal_places=2, default=0)
 
+    # --- NEW ACCOUNTABILITY METRICS ---
+    returned_material_kg = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    final_wastage_kg = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    unaccounted_variance_kg = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    transferred_to_next_job_kg = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+
     def stop_session(self):
-        """Calculates actual material used vs output for THIS specific session and refunds remainder."""
-        if self.status != 'ACTIVE':
-            return
-            
-        total_produced = self.total_output_kg + self.total_wastage_kg
-        total_reserved = sum(sm.reserved_kg for sm in self.materials.all())
-        
-        with transaction.atomic():
+        if self.status == 'ACTIVE':
             self.status = 'COMPLETED'
             self.end_time = timezone.now()
-            self.save(update_fields=['status', 'end_time'])
             
-            if total_produced < total_reserved and total_reserved > Decimal('0'):
-                refund_ratio = (total_reserved - total_produced) / total_reserved
-                
-                for sm in self.materials.all():
-                    refund_amount = sm.reserved_kg * refund_ratio
-                    sm.actual_used_kg = sm.reserved_kg - refund_amount
-                    sm.save()
-                    
-                    mat = RawMaterial.objects.select_for_update().get(pk=sm.material.pk)
-                    mat.current_stock_kg += refund_amount
-                    mat.save()
-            else:
-                for sm in self.materials.all():
-                    sm.actual_used_kg = sm.reserved_kg
-                    sm.save()
+            # We add the final machine purge to the total wastage for the Job Order
+            total_session_waste = self.total_wastage_kg + self.final_wastage_kg
+            
+            # Cascade totals to the JobOrder
+            JobOrder.objects.filter(pk=self.job_order.pk).update(
+                total_extruded_kg=F('total_extruded_kg') + self.total_output_kg,
+                total_extrusion_wastage_kg=F('total_extrusion_wastage_kg') + total_session_waste
+            )
+            self.save()
 
     def __str__(self):
         return f"{self.machine_no} | {self.job_order.jo_number} ({self.status})"
@@ -355,6 +348,27 @@ class ExtrusionLog(models.Model):
     def clean(self):
         if self.wastage_kg < Decimal('0') or self.wastage_kg > self.roll_weight_kg:
             raise ValidationError({'wastage_kg': 'Wastage cannot be negative or greater than the total roll weight.'})
+        
+        # --- NEW LOGIC: Conservation of Mass ---
+        if self.session_id:
+            # 1. Total material physically loaded into the hopper for this session
+            total_reserved = sum(sm.reserved_kg for sm in self.session.materials.all())
+            
+            # 2. Material already converted into past rolls or past wastage
+            already_consumed = self.session.total_output_kg + self.session.total_wastage_kg
+            
+            # 3. What is physically left? (Use max to prevent negative comparisons)
+            remaining_material = max(Decimal('0'), total_reserved - already_consumed)
+            
+            # 4. What is the operator claiming they just produced?
+            attempted_consumption = self.roll_weight_kg + self.wastage_kg
+
+            # We apply a 2% buffer just like Cutting/Packing to forgive slight scale miscalibrations.
+            # If they exceed this, block the log entirely.
+            if self.pk is None and attempted_consumption > (remaining_material * Decimal('1.02')):
+                raise ValidationError({
+                    'roll_weight_kg': f'Physical limit exceeded: Attempting to log {attempted_consumption:.1f}kg (Roll + Wastage), but only {remaining_material:.1f}kg of reserved material remains.'
+                })
 
     def save(self, *args, **kwargs):
         self.clean()
@@ -373,7 +387,14 @@ class ExtrusionLog(models.Model):
             )
             
             session.refresh_from_db()
+            
+            # --- NEW AUTO-COMPLETE LOGIC ---
+            total_reserved = sum(sm.reserved_kg for sm in session.materials.all())
+            total_consumed = session.total_output_kg + session.total_wastage_kg
+            
             if session.total_output_kg >= session.target_amount_kg:
+                session.stop_session()
+            elif total_consumed >= total_reserved and total_reserved > Decimal('0'):
                 session.stop_session()
 
 class CuttingSession(models.Model):

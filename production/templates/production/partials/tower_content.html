@@ -196,6 +196,36 @@
                     {% endfor %}
                 </ul>
             </div>
+            {% if discrepancy_alerts %}
+            <div style="background: var(--surface-alt); border-left: 5px solid var(--status-red); padding: 15px; margin-bottom: 20px; border-radius: var(--radius);">
+                <h3 style="color: var(--status-red); margin-top: 0; margin-bottom: 10px; font-size: 1.1rem; display: flex; align-items: center; gap: 8px;">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+                    MATERIAL DISCREPANCY ALERTS
+                </h3>
+                <table style="width: 100%; text-align: left; border-collapse: collapse;">
+                    <thead>
+                        <tr style="border-bottom: 1px solid var(--border-soft); color: var(--text-muted); font-size: 0.85rem;">
+                            <th style="padding-bottom: 5px;">Machine</th>
+                            <th style="padding-bottom: 5px;">Job Order</th>
+                            <th style="padding-bottom: 5px;">Operator</th>
+                            <th style="padding-bottom: 5px; color: var(--status-red);">Missing Weight</th>
+                            <th style="padding-bottom: 5px;">Time</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for alert in discrepancy_alerts %}
+                        <tr style="border-bottom: 1px solid var(--border-soft);">
+                            <td style="padding: 8px 0; font-weight: bold;">{{ alert.machine_no }}</td>
+                            <td style="padding: 8px 0;">{{ alert.job_order.jo_number }}</td>
+                            <td style="padding: 8px 0;">{{ alert.operator_name }} ({{ alert.shift }})</td>
+                            <td style="padding: 8px 0; font-weight: bold; color: var(--status-red);">{{ alert.unaccounted_variance_kg }} kg</td>
+                            <td style="padding: 8px 0; font-size: 0.85rem; color: var(--text-muted);">{{ alert.end_time|timesince }} ago</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
         </div>
 
         <div class="panel" style="border-top: 4px solid var(--action-blue);">

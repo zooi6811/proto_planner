@@ -246,7 +246,16 @@ def load_machine_state(request, machine_no=None):
     active_session = ExtrusionSession.objects.filter(machine_no=machine_no, status='ACTIVE').first()
     
     if active_session:
-        return render(request, 'production/partials/active_run_ui.html', {'session': active_session})
+        # NEW: Fetch jobs for the Rollover Dropdown
+        queued_jobs = JobOrder.objects.filter(
+            is_completed=False, 
+            order_quantity_kg__gt=0
+        ).exclude(id=active_session.job_order.id).order_by('queue_position')[:15]
+        
+        return render(request, 'production/partials/active_run_ui.html', {
+            'session': active_session,
+            'queued_jobs': queued_jobs # Add this to context
+        })
     else:
         # FIX: Ensure the priority queue ordering is applied to the machine workspace dropdown!
         job_orders = JobOrder.objects.filter(
@@ -380,15 +389,16 @@ def log_session_roll(request):
         # Pull the fresh totals 
         session.refresh_from_db() 
         
-        # Explicitly check the math and close the job
-        if session.total_output_kg >= session.target_amount_kg:
-            session.status = 'COMPLETED'
-            session.save()
+        # NOTE: We removed the manual "session.status = 'COMPLETED'" check here
+        # because the ExtrusionLog model now automatically handles it!
         
         # --- THE SPLIT BEHAVIOUR FIX ---
         if session.status == 'COMPLETED':
-            # 1. The Job is Done
-            success_msg = get_toast_popup("Target Reached! Session Auto-Completed.", "success", use_oob=False)
+            # Determine WHY the session auto-completed to show the correct toast
+            if session.total_output_kg >= session.target_amount_kg:
+                success_msg = get_toast_popup("Target Reached! Session Auto-Completed.", "success", use_oob=False)
+            else:
+                success_msg = get_toast_popup("Material Depleted! Session Auto-Completed.", "warning", use_oob=False)
             
             # We don't need to clear inputs because the form is about to be replaced
             soft_refresh = f"""
@@ -408,16 +418,128 @@ def log_session_roll(request):
             # 2. The Job is Still Active
             success_msg = get_toast_popup(f"Successfully logged {roll_weight}kg roll.", "success", use_oob=False)
             
-            # Clear the inputs for the next roll
+            # THE FIX: Tell HTMX to quietly reload the machine state.
+            # This instantly updates the progress bar, output totals, and clears the form!
             soft_refresh = f"""
             <script>
-                var rw = document.querySelector('input[name="roll_weight"]'); if(rw) rw.value='';
-                var wst = document.querySelector('input[name="wastage"]'); if(wst) wst.value='';
+                htmx.ajax('GET', '/load-machine-state/{session.machine_no}/', {{target: '#machine-workspace'}});
             </script>
             """
             
-            # Returns normally to the #feedback-container
-            return HttpResponse(success_msg + soft_refresh)
+            response = HttpResponse(success_msg + soft_refresh)
+            
+            # Hijack the form's target and push the toast to the body
+            response['HX-Retarget'] = 'body'
+            response['HX-Reswap'] = 'beforeend'
+            return response
+        
+@transaction.atomic
+def handover_extrusion_shift(request, session_id):
+    """Protocol B: Seamlessly transfers an active session to a new operator."""
+    if request.method == 'POST':
+        session = get_object_or_404(ExtrusionSession, id=session_id, status='ACTIVE')
+        new_operator = request.POST.get('operator_name')
+        new_shift = request.POST.get('shift')
+        
+        session.operator_name = new_operator
+        session.shift = new_shift
+        session.save()
+        
+        success_toast = get_toast_popup(f"Shift Handed Over to {new_operator}.", "success", use_oob=False)
+        refresh = f"<script>htmx.ajax('GET', '/load-machine-state/{session.machine_no}/', {{target: '#machine-workspace'}});</script>"
+        return HttpResponse(success_toast + refresh)
+    
+@transaction.atomic
+def rollover_extrusion_session(request, session_id):
+    """Protocol C: Transfers remaining hopper material to a brand new Job Order."""
+    if request.method == 'POST':
+        old_session = get_object_or_404(ExtrusionSession, id=session_id, status='ACTIVE')
+        next_job_id = request.POST.get('next_job_order_id')
+        next_job = get_object_or_404(JobOrder, id=next_job_id)
+        
+        # 1. Calculate remaining physical material
+        total_reserved = sum(sm.reserved_kg for sm in old_session.materials.all())
+        total_consumed = old_session.total_output_kg + old_session.total_wastage_kg
+        remaining_balance = max(Decimal('0.00'), total_reserved - total_consumed)
+        
+        # 2. Spawn the new session
+        new_session = ExtrusionSession.objects.create(
+            machine_no=old_session.machine_no,
+            job_order=next_job,
+            operator_name=old_session.operator_name,
+            shift=old_session.shift,
+            status='ACTIVE',
+            # --- THE FIX: We must give the new session its target weight ---
+            target_amount_kg=next_job.remaining_extrusion_kg 
+        )
+        
+        # 3. Transfer the physical material via a new SessionMaterial ledger
+        # Assuming the old session only had one primary raw material for simplicity
+        primary_material_record = old_session.materials.first()
+        if primary_material_record and remaining_balance > 0:
+            SessionMaterial.objects.create(
+                session=new_session,
+                material=primary_material_record.material,
+                reserved_kg=remaining_balance
+            )
+            
+        # 4. Cleanly close the old session
+        old_session.transferred_to_next_job_kg = remaining_balance
+        old_session.stop_session()
+        
+        success_toast = get_toast_popup("Material Rolled Over to New Job.", "success", use_oob=False)
+        refresh = f"<script>htmx.ajax('GET', '/load-machine-state/{new_session.machine_no}/', {{target: '#machine-workspace'}});</script>"
+        return HttpResponse(success_toast + refresh)
+
+
+@transaction.atomic
+def purge_and_close_session(request, session_id):
+    """Protocol A: The Strict Reconciliation Gateway for emptying a machine."""
+    if request.method == 'POST':
+        session = get_object_or_404(ExtrusionSession, id=session_id, status='ACTIVE')
+        
+        returned_kg = Decimal(request.POST.get('returned_material_kg', '0'))
+        final_waste = Decimal(request.POST.get('final_wastage_kg', '0'))
+        force_discrepancy = request.POST.get('submit_with_discrepancy') == 'true'
+        
+        total_reserved = sum(sm.reserved_kg for sm in session.materials.all())
+        total_consumed = session.total_output_kg + session.total_wastage_kg
+        
+        # The Mathematical Anchor
+        accounted_for = total_consumed + returned_kg + final_waste
+        variance = total_reserved - accounted_for
+        
+        # Allow a tiny 1% buffer for scale miscalibration
+        buffer = total_reserved * Decimal('0.01')
+        
+        if abs(variance) > buffer and not force_discrepancy:
+            # Trap the operator: The math does not balance.
+            error = f"Discrepancy detected! You are missing {variance}kg of material. Please recount or flag a discrepancy."
+            return HttpResponse(get_toast_popup(error, "error", use_oob=False))
+            
+        # If it balances, or if the operator forces the discrepancy
+        session.returned_material_kg = returned_kg
+        session.final_wastage_kg = final_waste
+        
+        if force_discrepancy:
+            session.unaccounted_variance_kg = variance
+            
+        # ONLY refund the explicitly weighed, clean return material back to inventory
+        if returned_kg > 0:
+            primary_material = session.materials.first()
+            if primary_material:
+                raw_mat = primary_material.material
+                raw_mat.current_stock_kg += returned_kg
+                raw_mat.save()
+                
+        session.stop_session()
+        
+        msg = "Session Closed with Discrepancy Flag." if force_discrepancy else "Session Cleanly Closed."
+        toast_type = "warning" if force_discrepancy else "success"
+        
+        success_toast = get_toast_popup(msg, toast_type, use_oob=False)
+        refresh = f"<script>htmx.ajax('GET', '/load-machine-state/{session.machine_no}/', {{target: '#machine-workspace'}});</script>"
+        return HttpResponse(success_toast + refresh)
     
 @login_required(login_url='login')
 def complete_extrusion_session(request, session_id):
@@ -582,25 +704,17 @@ def complete_cutting_roll(request, session_id):
         session = get_object_or_404(CuttingSession, id=session_id, status='ACTIVE')
         machine_no = session.machine_no
         
-        # 1. Use Decimal to mathematically guarantee the database accepts the value
-        input_weight = Decimal(str(session.input_roll_weight_kg or '0.0'))
-        output_weight = Decimal(str(session.total_output_kg or '0.0'))
+        # USE THE MODEL METHOD: This calculates wastage and updates the JobOrder automatically
+        session.stop_session(calculate_wastage=True) 
         
-        calculated_wastage = input_weight - output_weight
+        # Refresh to get the calculated wastage for the toast message
+        session.refresh_from_db()
         
-        # 2. Assign it to the session
-        # NOTE: If your model field is called 'total_wastage_kg', change the name here!
-        session.wastage_kg = max(Decimal('0.0'), calculated_wastage)
-        
-        session.status = 'COMPLETED'
-        session.save()
-        
-        # Optional: If your Job Order aggregates total wastage, you might need to update it here too
-        # session.job_order.total_cutting_wastage_kg += session.wastage_kg
-        # session.job_order.save()
-        
-        # 3. Add the exact wastage amount to the toast for immediate feedback
-        success_toast = get_toast_popup(f"Roll completed! {session.wastage_kg}kg wastage logged.", "success", use_oob=False)
+        success_toast = get_toast_popup(
+            f"Roll completed! {session.total_wastage_kg}kg wastage logged.", 
+            "success", 
+            use_oob=False
+        )
         soft_refresh = f"<script>htmx.ajax('GET', '/load-cutting-state/{machine_no}/', {{target: '#cutting-workspace'}});</script>"
         
         return HttpResponse(success_toast + soft_refresh)
@@ -856,6 +970,11 @@ def control_tower(request):
         customer=F('job_order__customer')
     ).annotate(total=Sum(F('packing_size_kg') * F('quantity_packed'))).order_by('-total')
 
+    # Fetch recent sessions where material went missing (variance > 0)
+    discrepancy_alerts = ExtrusionSession.objects.filter(
+        unaccounted_variance_kg__gt=0
+    ).select_related('job_order').order_by('-end_time')[:5]
+
     # Live Operational Context
     active_machines = ExtrusionSession.objects.filter(status='ACTIVE').select_related('job_order')
     active_cutting_machines = CuttingSession.objects.filter(status='ACTIVE').select_related('job_order') # Added this line
@@ -891,6 +1010,7 @@ def control_tower(request):
         'active_cutting_machines': active_cutting_machines,
         'low_stock_materials': low_stock_materials,
         'purchasing_shortfalls': purchasing_shortfalls,
+        'discrepancy_alerts': discrepancy_alerts,
         'queued_jobs': queued_jobs,
         'active_jobs': active_jobs,
         'completed_jobs': completed_jobs,

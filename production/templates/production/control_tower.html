@@ -46,12 +46,6 @@
         </div>
     </div>
 
-    <div id="state-anchors" style="display: none;">
-        <input type="hidden" class="tower-state" name="timeframe" value="daily">
-        <input type="hidden" class="tower-state" name="expanded" value="">
-        <input type="hidden" class="tower-state" name="job_tab" value="active">
-    </div>
-
     <div id="tower-container" 
          hx-get="/control-tower/" 
          hx-trigger="load, every 10s" 
@@ -68,6 +62,25 @@
             // Appends a unique timestamp (?t=1713245000) to every background fetch.
             // This forces Chrome/Edge/Safari to bypass their internal caches entirely.
             evt.detail.parameters['t'] = Date.now();
+
+            // STATE PRESERVER: Ensures automated polling and button clicks remember your exact view
+            if (evt.detail.path.includes('/control-tower/')) {
+                var tf = document.querySelector('input[name="timeframe"]');
+                var exp = document.querySelector('input[name="expanded"]');
+                var jt = document.querySelector('input[name="job_tab"]');
+
+                // If the background refresh (or a tab button) doesn't explicitly provide a parameter,
+                // we safely inject the current active state straight from the DOM.
+                if (tf && !evt.detail.path.includes('timeframe=')) {
+                    evt.detail.parameters['timeframe'] = tf.value;
+                }
+                if (exp && !evt.detail.path.includes('expanded=')) {
+                    evt.detail.parameters['expanded'] = exp.value;
+                }
+                if (jt && !evt.detail.path.includes('job_tab=')) {
+                    evt.detail.parameters['job_tab'] = jt.value;
+                }
+            }
         });
     </script>
 </body>

@@ -34,6 +34,10 @@ urlpatterns = [
     re_path(r'^log-session-roll/?$', views.log_session_roll, name='log_session_roll'),
     path('session/stop/<int:session_id>/', views.stop_extrusion_session, name='stop_extrusion_session'),
 
+    path('extrusion/handover/<int:session_id>/', views.handover_extrusion_shift, name='handover_extrusion_shift'),
+    path('extrusion/rollover/<int:session_id>/', views.rollover_extrusion_session, name='rollover_extrusion_session'),
+    path('extrusion/purge/<int:session_id>/', views.purge_and_close_session, name='purge_and_close_session'),
+
     # Form Submissions (Immune to the HTMX Trailing Slash POST Trap)
     re_path(r'^submit-packing/?$', views.submit_packing, name='submit_packing'),
     re_path(r'^submit-material-usage/?$', views.submit_material_usage, name='submit_material_usage'), # Restored missing route
