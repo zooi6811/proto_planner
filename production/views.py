@@ -246,15 +246,23 @@ def load_machine_state(request, machine_no=None):
     active_session = ExtrusionSession.objects.filter(machine_no=machine_no, status='ACTIVE').first()
     
     if active_session:
-        # NEW: Fetch jobs for the Rollover Dropdown
-        queued_jobs = JobOrder.objects.filter(
-            is_completed=False, 
-            order_quantity_kg__gt=0
-        ).exclude(id=active_session.job_order.id).order_by('queue_position')[:15]
+        queued_jobs = JobOrder.objects.filter(is_completed=False, order_quantity_kg__gt=0).exclude(id=active_session.job_order.id).order_by('queue_position')[:15]
         
+        # --- NEW: Calculate Remaining Hopper Material ---
+        active_material_name = "No Material Reserved"
+        total_reserved = sum(sm.reserved_kg for sm in active_session.materials.all())
+        total_consumed = active_session.total_output_kg + active_session.total_wastage_kg
+        remaining_material_kg = max(Decimal('0.00'), total_reserved - total_consumed)
+        
+        first_mat = active_session.materials.first()
+        if first_mat:
+            active_material_name = first_mat.material.name
+
         return render(request, 'production/partials/active_run_ui.html', {
             'session': active_session,
-            'queued_jobs': queued_jobs # Add this to context
+            'queued_jobs': queued_jobs,
+            'active_material_name': active_material_name,
+            'remaining_material_kg': remaining_material_kg
         })
     else:
         # FIX: Ensure the priority queue ordering is applied to the machine workspace dropdown!
@@ -596,7 +604,13 @@ def load_cutting_state(request, machine_no=None):
     active_session = CuttingSession.objects.filter(machine_no=machine_no, status='ACTIVE').first()
     
     if active_session:
-        return render(request, 'production/partials/active_cutting_ui.html', {'session': active_session})
+        total_consumed = active_session.total_output_kg + active_session.total_wastage_kg
+        remaining_roll_kg = max(Decimal('0.00'), active_session.input_roll_weight_kg - total_consumed)
+        
+        return render(request, 'production/partials/active_cutting_ui.html', {
+            'session': active_session,
+            'remaining_roll_kg': remaining_roll_kg
+        })
     else:
         # Load priority queue for cutting
         job_orders = JobOrder.objects.filter(

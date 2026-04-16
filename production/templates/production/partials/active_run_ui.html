@@ -6,6 +6,21 @@
         <span style="font-weight: bold; color: var(--text-muted);">SHIFT: {{ session.shift }} | OP: {{ session.operator_name }}</span>
     </div>
 
+    <div style="margin-top: 15px; margin-bottom: 15px;">
+        {% include 'production/partials/job_spec_card.html' with job=session.job_order %}
+    </div>
+
+    <div style="background: var(--bg-floor); border: 1px solid var(--border-soft); border-left: 4px solid var(--brand-dark); padding: 12px; border-radius: var(--radius); margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center;">
+        <div>
+            <p style="margin: 0; font-size: 0.8rem; color: var(--text-muted); text-transform: uppercase; font-weight: bold;">Active Material Formula</p>
+            <p style="margin: 0; font-size: 1.1rem; font-weight: bold; color: var(--text-main);">{{ active_material_name }}</p>
+        </div>
+        <div style="text-align: right;">
+            <p style="margin: 0; font-size: 0.8rem; color: var(--text-muted); text-transform: uppercase; font-weight: bold;">Remaining in Hopper</p>
+            <p style="margin: 0; font-size: 1.2rem; font-weight: bold; color: var(--brand-dark);" class="text-mono">{{ remaining_material_kg|floatformat:2 }} KG</p>
+        </div>
+    </div>
+
     <div style="margin-bottom: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
         <div>
             <p class="input-label">Job Order</p>
