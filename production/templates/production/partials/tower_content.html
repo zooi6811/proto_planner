@@ -1,7 +1,8 @@
 <div style="display: flex; flex-direction: column; gap: 20px;">
 
-    <input type="hidden" name="timeframe" value="{{ timeframe }}">
-    <input type="hidden" name="expanded" id="expanded-state" value="{{ expanded_param }}">
+    <input type="hidden" class="tower-state" name="timeframe" value="{{ timeframe }}">
+    <input type="hidden" class="tower-state" name="expanded" id="expanded-state" value="{{ expanded_param }}">
+    <input type="hidden" class="tower-state" name="job_tab" value="{{ job_tab }}">
 
     <div style="display: flex; justify-content: space-between; align-items: flex-end;">
         <h2 style="color: var(--brand-dark); margin: 0;">Production Volume</h2>
@@ -35,7 +36,6 @@
     </style>
 
     <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px;">
-        
         <details class="kpi-details" id="details-extrusion" style="border-top: 4px solid var(--brand-dark);" {% if 'extrusion' in expanded_sections %}open{% endif %}>
             <summary style="text-align: center;">
                 <h3 class="input-label">{{ label_prefix }} Extrusion <span class="expand-icon">▼</span></h3>
@@ -123,9 +123,7 @@
     </script>
 
     <div style="display: grid; grid-template-columns: 1fr 2fr; gap: 20px;">
-        
         <div style="display: flex; flex-direction: column; gap: 20px;">
-            
             <div class="panel" style="border-top: 4px solid var(--status-green);">
                 <div class="panel-header">
                     <h2 style="color: var(--status-green);">⚙️ Live Machines</h2>
@@ -165,7 +163,6 @@
                             </div>
                         </li>
                     {% endfor %}
-
                 </ul>
             </div>
 
@@ -202,9 +199,6 @@
         </div>
 
         <div class="panel" style="border-top: 4px solid var(--action-blue);">
-            
-            <input type="hidden" name="job_tab" value="{{ job_tab }}">
-
             <div class="panel-header" style="flex-direction: column; align-items: flex-start; gap: 15px;">
                 <div style="display: flex; justify-content: space-between; width: 100%; align-items: center;">
                     <h2 style="color: var(--action-blue); margin: 0;">🏭 Factory Jobs</h2>
@@ -245,7 +239,6 @@
                         {% endfor %}
                     </tbody>
                 </table>
-
             {% elif job_tab == 'completed' %}
                 <table style="width: 100%; text-align: left; border-collapse: collapse;">
                     <thead>
@@ -267,7 +260,6 @@
                         {% endfor %}
                     </tbody>
                 </table>
-
             {% else %}
                 <table style="width: 100%; text-align: left; border-collapse: collapse;">
                     <thead>
@@ -285,21 +277,18 @@
                                 {{ job.jo_number }}<br>
                                 <small style="color: var(--text-muted); font-weight: normal;">{{ job.customer }}</small>
                             </td>
-                            
                             <td style="padding: 15px 15px 15px 0; width: 25%;">
                                 <div style="background: var(--bg-floor); border-radius: var(--radius); height: 8px; width: 100%; overflow: hidden; border: 1px solid var(--border-soft);">
                                     <div style="background: var(--brand-dark); height: 100%; width: {{ job.extrusion_progress }}%;"></div>
                                 </div>
                                 <small class="text-mono" style="color: var(--text-muted);">{{ job.extrusion_progress }}%</small>
                             </td>
-
                             <td style="padding: 15px 15px 15px 0; width: 25%;">
                                 <div style="background: var(--bg-floor); border-radius: var(--radius); height: 8px; width: 100%; overflow: hidden; border: 1px solid var(--border-soft);">
                                     <div style="background: var(--action-blue); height: 100%; width: {{ job.cutting_progress }}%;"></div>
                                 </div>
                                 <small class="text-mono" style="color: var(--text-muted);">{{ job.cutting_progress }}%</small>
                             </td>
-
                             <td style="padding: 15px 15px 15px 0; width: 25%;">
                                 <div style="background: var(--bg-floor); border-radius: var(--radius); height: 8px; width: 100%; overflow: hidden; border: 1px solid var(--border-soft);">
                                     <div style="background: var(--status-green); height: 100%; width: {{ job.packing_progress }}%;"></div>

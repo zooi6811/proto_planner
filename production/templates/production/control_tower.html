@@ -15,7 +15,7 @@
         .live-tag { color: var(--border-soft); font-family: var(--font-mono); font-weight: bold; font-size: 0.9rem; }
     </style>
 </head>
-<body hx-ext="django-htmx, ws" ws-connect="/ws/live/">
+<body hx-ext="django-htmx">
     <div id="ws-bridge"></div>
     <nav class="top-nav">
         <div class="nav-brand">
@@ -46,11 +46,29 @@
         </div>
     </div>
 
-    <div id="tower-container" hx-get="/control-tower/" hx-trigger="load, factory-update from:body" hx-swap="innerHTML" hx-include="input[type='hidden']">
+    <div id="state-anchors" style="display: none;">
+        <input type="hidden" class="tower-state" name="timeframe" value="daily">
+        <input type="hidden" class="tower-state" name="expanded" value="">
+        <input type="hidden" class="tower-state" name="job_tab" value="active">
+    </div>
+
+    <div id="tower-container" 
+         hx-get="/control-tower/" 
+         hx-trigger="load, every 10s" 
+         hx-swap="innerHTML" 
+         hx-include=".tower-state">
+        
         <div style="text-align: center; padding: 50px; color: var(--border-hard); font-family: var(--font-mono);">
             > ESTABLISHING CONNECTION TO FLOOR TERMINALS...
         </div>
     </div>
-
+    
+    <script>
+        document.body.addEventListener('htmx:configRequest', function(evt) {
+            // Appends a unique timestamp (?t=1713245000) to every background fetch.
+            // This forces Chrome/Edge/Safari to bypass their internal caches entirely.
+            evt.detail.parameters['t'] = Date.now();
+        });
+    </script>
 </body>
 </html>

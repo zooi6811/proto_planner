@@ -18,6 +18,7 @@ from .models import UserProfile
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.contrib.auth import logout as django_logout
 from django.contrib.auth.models import User
+from django.views.decorators.cache import never_cache
 
 def gateway_login(request):
     if request.user.is_authenticated:
@@ -376,21 +377,66 @@ def log_session_roll(request):
             error_msg = " ".join(e.messages) if hasattr(e, 'messages') else str(e)
             return reload_with_error(error_msg)
         
+        # Pull the fresh totals 
         session.refresh_from_db() 
         
+        # Explicitly check the math and close the job
+        if session.total_output_kg >= session.target_amount_kg:
+            session.status = 'COMPLETED'
+            session.save()
+        
+        # --- THE SPLIT BEHAVIOUR FIX ---
         if session.status == 'COMPLETED':
+            # 1. The Job is Done
             success_msg = get_toast_popup("Target Reached! Session Auto-Completed.", "success", use_oob=False)
+            
+            # We don't need to clear inputs because the form is about to be replaced
+            soft_refresh = f"""
+            <script>
+                htmx.ajax('GET', '/load-machine-state/{session.machine_no}/', {{target: '#machine-workspace'}});
+            </script>
+            """
+            
+            response = HttpResponse(success_msg + soft_refresh)
+            
+            # CRITICAL: Hijack the form's target and redirect it to the body!
+            response['HX-Retarget'] = 'body'
+            response['HX-Reswap'] = 'beforeend'
+            return response
+            
         else:
+            # 2. The Job is Still Active
             success_msg = get_toast_popup(f"Successfully logged {roll_weight}kg roll.", "success", use_oob=False)
             
-        soft_refresh = f"""
-        <script>
-            var rw = document.querySelector('input[name="roll_weight"]'); if(rw) rw.value='';
-            var wst = document.querySelector('input[name="wastage"]'); if(wst) wst.value='';
-            htmx.ajax('GET', '/load-machine-state/{session.machine_no}/', {{target: '#machine-workspace'}});
-        </script>
-        """
-        return HttpResponse(success_msg + soft_refresh)
+            # Clear the inputs for the next roll
+            soft_refresh = f"""
+            <script>
+                var rw = document.querySelector('input[name="roll_weight"]'); if(rw) rw.value='';
+                var wst = document.querySelector('input[name="wastage"]'); if(wst) wst.value='';
+            </script>
+            """
+            
+            # Returns normally to the #feedback-container
+            return HttpResponse(success_msg + soft_refresh)
+    
+@login_required(login_url='login')
+def complete_extrusion_session(request, session_id):
+    """Operator successfully completes the extrusion job."""
+    if request.method == 'POST':
+        # 1. Fetch the active session
+        session = get_object_or_404(ExtrusionSession, id=session_id, status='ACTIVE')
+        machine_no = session.machine_no
+        
+        # 2. Mark as complete and save
+        session.status = 'COMPLETED'
+        session.save()
+        
+        # 3. Build the UI response (Toast + the Soft Refresh Script)
+        success_toast = get_toast_popup(f"Extrusion on Machine {machine_no} completed successfully.", "success", use_oob=False)
+        soft_refresh = f"<script>htmx.ajax('GET', '/load-machine-state/{machine_no}/', {{target: '#machine-workspace'}});</script>"
+        
+        # 4. Return the payload to execute in the browser
+        return HttpResponse(success_toast + soft_refresh)
 
 def stop_extrusion_session(request, session_id):
     """Operator manually terminates the job early."""
@@ -398,11 +444,20 @@ def stop_extrusion_session(request, session_id):
         return HttpResponse(get_toast_popup("Unauthorised: Only Operators and Admins can terminate sessions.", "error", use_oob=False))
     
     session = get_object_or_404(ExtrusionSession, id=session_id)
+    
+    # 1. Capture the exact location data before closing the session
+    machine_no = session.machine_no
+    shift = session.shift
+    
+    # 2. Terminate the session
     session.stop_session()
     
-    warning_toast = get_toast_popup(f"Session on Machine {session.machine_no} terminated early.", "warning", use_oob=False)
+    warning_toast = get_toast_popup(f"Session on Machine {machine_no} terminated early.", "warning", use_oob=False)
     
-    soft_refresh = f"<script>htmx.ajax('GET', '/load-machine-state/{session.machine_no}/', {{target: '#machine-workspace'}});</script>"
+    # 3. THE MAGIC LOOP: Append the state to the AJAX GET request
+    ajax_url = f"/load-machine-state/{machine_no}/?prefill_machine={machine_no}&prefill_shift={shift}"
+    soft_refresh = f"<script>htmx.ajax('GET', '{ajax_url}', {{target: '#machine-workspace'}});</script>"
+    
     return HttpResponse(warning_toast + soft_refresh)
 
 # -----------------------------------------------------------------------------
@@ -520,6 +575,35 @@ def log_cut_roll(request):
         </script>
         """
         return HttpResponse(success_msg + soft_refresh)
+    
+@login_required(login_url='login')
+def complete_cutting_roll(request, session_id):
+    if request.method == 'POST':
+        session = get_object_or_404(CuttingSession, id=session_id, status='ACTIVE')
+        machine_no = session.machine_no
+        
+        # 1. Use Decimal to mathematically guarantee the database accepts the value
+        input_weight = Decimal(str(session.input_roll_weight_kg or '0.0'))
+        output_weight = Decimal(str(session.total_output_kg or '0.0'))
+        
+        calculated_wastage = input_weight - output_weight
+        
+        # 2. Assign it to the session
+        # NOTE: If your model field is called 'total_wastage_kg', change the name here!
+        session.wastage_kg = max(Decimal('0.0'), calculated_wastage)
+        
+        session.status = 'COMPLETED'
+        session.save()
+        
+        # Optional: If your Job Order aggregates total wastage, you might need to update it here too
+        # session.job_order.total_cutting_wastage_kg += session.wastage_kg
+        # session.job_order.save()
+        
+        # 3. Add the exact wastage amount to the toast for immediate feedback
+        success_toast = get_toast_popup(f"Roll completed! {session.wastage_kg}kg wastage logged.", "success", use_oob=False)
+        soft_refresh = f"<script>htmx.ajax('GET', '/load-cutting-state/{machine_no}/', {{target: '#cutting-workspace'}});</script>"
+        
+        return HttpResponse(success_toast + soft_refresh)
 
 def stop_cutting_session(request, session_id):
     """Operator terminates the cutting session early."""
@@ -660,7 +744,20 @@ def get_extrusion_form(request):
 @login_required(login_url='login')
 def get_cutting_form(request):
     active_machines = CuttingSession.objects.filter(status='ACTIVE').values_list('machine_no', flat=True)
-    return render(request, 'production/partials/cutting_form.html', {'active_machines': list(active_machines), 'dept': 'cutting'})
+    
+    # 1. Catch the state parameters (defaults to an empty string if not found)
+    prefill_machine = request.GET.get('prefill_machine', '')
+    prefill_shift = request.GET.get('prefill_shift', '')
+    
+    # 2. Bundle them into your context dictionary
+    context = {
+        'active_machines': list(active_machines), 
+        'dept': 'cutting',
+        'prefill_machine': prefill_machine,
+        'prefill_shift': prefill_shift,
+    }
+    
+    return render(request, 'production/partials/cutting_form.html', context)
 
 @login_required(login_url='login')
 def get_packing_form(request):
@@ -695,6 +792,7 @@ def search_jobs(request):
 # DASHBOARD & TOWER LOGIC
 # -----------------------------------------------------------------------------
 @login_required(login_url='login')
+@never_cache
 def control_tower(request):
     if hasattr(request.user, 'profile') and request.user.profile.role == 'OPERATOR':
         return redirect('dashboard')

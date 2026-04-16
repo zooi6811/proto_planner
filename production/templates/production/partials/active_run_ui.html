@@ -35,7 +35,7 @@
                 <input type="number" name="wastage" step="0.01" min="0" placeholder="0" class="text-mono" value="{{ request.POST.wastage|default:'' }}">
             </div>
         </div>
-        <div style="padding: 10px; background-color: #f8f9fa; border-left: 4px solid #17a2b8; margin-bottom: 15px; border-radius: 4px;">
+        <div style="padding: 10px; background-color: #f8f9fa; border-left: 4px solid #17a2b8; margin-top: 15px; margin-bottom: 15px; border-radius: 4px;">
             <strong style="color: #333;">Total Order Remaining:</strong> 
             <span style="font-size: 1.1em; font-weight: bold; color: #17a2b8;">
                 {{ session.job_order.remaining_extrusion_kg|floatformat:1 }} kg
@@ -44,15 +44,29 @@
         <button type="submit" class="btn btn-success" style="width: 100%; margin-top: 15px;">SUBMIT ROLL</button>
     </form>
 
-    <div style="display: flex; justify-content: space-between; align-items: center;">
-        <div id="feedback-container" style="flex-grow: 1; margin-right: 20px;"></div>
+    <div id="feedback-container" style="margin-bottom: 20px;"></div>
+
+    <div style="display: flex; justify-content: space-between; align-items: center; padding-top: 20px; border-top: 2px dashed var(--border-soft);">
         
-        <button hx-post="{% url 'stop_session' session.id %}" 
-                hx-target="#feedback-container" 
+        <button hx-post="{% url 'stop_extrusion_session' session.id %}" 
+                hx-target="body" 
+                hx-swap="beforeend"
                 hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+                hx-confirm="End this session early? This marks the job as incomplete." 
                 hx-disabled-elt="this"
-                class="btn" style="background-color: var(--status-red); color: white; font-size: 0.9rem; padding: 10px 15px;">
+                class="btn" style="background-color: var(--status-red); color: white; font-size: 0.9rem; padding: 10px 15px; border: none; cursor: pointer;">
             TERMINATE SESSION EARLY
         </button>
+
+        <button hx-post="{% url 'complete_extrusion_session' session.id %}" 
+                hx-target="body" 
+                hx-swap="beforeend"
+                hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+                hx-confirm="Are you sure you want to successfully complete this extrusion run?"
+                class="btn" 
+                style="background-color: var(--status-green); color: white; padding: 15px 25px; font-size: 1.1rem; font-weight: bold; border: none; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+            COMPLETE JOB
+        </button>
+        
     </div>
 </div>

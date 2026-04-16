@@ -10,7 +10,7 @@
                 <label class="input-label">Machine No</label>
                 <select id="cutting-machine-select" name="machine_no" required style="width: 100%; font-weight: bold; border-color: var(--action-blue);">
                     <option value="" disabled selected>-- Select Machine --</option>
-                    {% for i in '123456789'|make_list %}
+                    {% for i in '1234567'|make_list %}
                         <option value="C{{ i }}" {% if 'C'|add:i in active_machines %}style="color: var(--status-green); font-weight: bold;"{% endif %}>
                             C{{ i }} {% if 'C'|add:i in active_machines %}🟢 (ACTIVE){% endif %}
                         </option>

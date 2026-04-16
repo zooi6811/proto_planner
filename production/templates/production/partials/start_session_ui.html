@@ -82,6 +82,7 @@
 </template>
 
 <script>
+{
     // Pre-load all factory materials into a local JS dictionary
     const materialData = {
         {% for cat in categories %}
@@ -121,4 +122,5 @@
 
     // Automatically spawn the first empty row when the UI loads
     addMaterialRow();
+}
 </script>

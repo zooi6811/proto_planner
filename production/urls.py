@@ -24,13 +24,15 @@ urlpatterns = [
     path('start-cutting-session/', views.start_cutting_session, name='start_cutting_session'),
     path('log-cut-roll/', views.log_cut_roll, name='log_cut_roll'),
     path('stop-cutting-session/<int:session_id>/', views.stop_cutting_session, name='stop_cutting_session'),
+    path('cutting/complete/<int:session_id>/', views.complete_cutting_roll, name='complete_cutting_roll'),
 
     # Stateful Extrusion Sessions (Bulletproofed against 301s)
     # The regex allows 'machine_no' to be natively captured whilst remaining tolerant of empty paths
+    path('extrusion/complete/<int:session_id>/', views.complete_extrusion_session, name='complete_extrusion_session'),
     re_path(r'^load-machine-state(?:/(?P<machine_no>[A-Za-z0-9_-]+))?/?$', views.load_machine_state, name='load_machine_state'),
     re_path(r'^start-session/?$', views.start_extrusion_session, name='start_session'),
     re_path(r'^log-session-roll/?$', views.log_session_roll, name='log_session_roll'),
-    re_path(r'^stop-session/(?P<session_id>\d+)/?$', views.stop_extrusion_session, name='stop_session'),
+    path('session/stop/<int:session_id>/', views.stop_extrusion_session, name='stop_extrusion_session'),
 
     # Form Submissions (Immune to the HTMX Trailing Slash POST Trap)
     re_path(r'^submit-packing/?$', views.submit_packing, name='submit_packing'),
