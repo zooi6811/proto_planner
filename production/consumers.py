@@ -1,14 +1,29 @@
 import json
 from channels.generic.websocket import AsyncWebsocketConsumer
 
-class ProductionSignalConsumer(AsyncWebsocketConsumer):
+class LiveFactoryConsumer(AsyncWebsocketConsumer):
     async def connect(self):
-        await self.channel_layer.group_add("live_factory", self.channel_name)
+        self.group_name = 'live_factory'
+
+        # Join the global factory group
+        await self.channel_layer.group_add(
+            self.group_name,
+            self.channel_name
+        )
         await self.accept()
 
     async def disconnect(self, close_code):
-        await self.channel_layer.group_discard("live_factory", self.channel_name)
+        # Leave the group on disconnect
+        await self.channel_layer.group_discard(
+            self.group_name,
+            self.channel_name
+        )
 
+    # Receive message from room group
     async def factory_update(self, event):
-        # We removed the <script> tag. Now we just send a harmless ping to trigger HTMX.
-        await self.send(text_data='<div id="ws-bridge" hx-swap-oob="true"></div>')
+        message_type = event.get('message_type', 'softRefresh')
+        
+        # Send a minimal JSON payload to the client
+        await self.send(text_data=json.dumps({
+            'type': message_type
+        }))

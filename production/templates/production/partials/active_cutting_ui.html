@@ -39,6 +39,7 @@
     <form hx-post="{% url 'log_cut_roll' %}" hx-target="body" hx-swap="beforeend" hx-disabled-elt="find button[type='submit']" style="background: var(--bg-floor); padding: 15px; border-radius: var(--radius); margin-bottom: 20px;">
         {% csrf_token %}
         <input type="hidden" name="session_id" value="{{ session.id }}">
+        <input type="hidden" name="session_version" value="{{ session.version }}">
         <h3 style="margin-bottom: 15px; font-size: 1rem; color: var(--text-muted);">LOG CUT OUTPUT</h3>
         
         <div style="display: grid; grid-template-columns: 1fr; gap: 15px;">

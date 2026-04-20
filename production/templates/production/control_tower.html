@@ -58,30 +58,27 @@
     </div>
     
     <script>
-        document.body.addEventListener('htmx:configRequest', function(evt) {
-            // Appends a unique timestamp (?t=1713245000) to every background fetch.
-            // This forces Chrome/Edge/Safari to bypass their internal caches entirely.
-            evt.detail.parameters['t'] = Date.now();
+        // Initialise the WebSocket connection
+        const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+        const factorySocket = new WebSocket(
+            protocol + window.location.host + '/ws/live/'
+        );
 
-            // STATE PRESERVER: Ensures automated polling and button clicks remember your exact view
-            if (evt.detail.path.includes('/control-tower/')) {
-                var tf = document.querySelector('input[name="timeframe"]');
-                var exp = document.querySelector('input[name="expanded"]');
-                var jt = document.querySelector('input[name="job_tab"]');
-
-                // If the background refresh (or a tab button) doesn't explicitly provide a parameter,
-                // we safely inject the current active state straight from the DOM.
-                if (tf && !evt.detail.path.includes('timeframe=')) {
-                    evt.detail.parameters['timeframe'] = tf.value;
-                }
-                if (exp && !evt.detail.path.includes('expanded=')) {
-                    evt.detail.parameters['expanded'] = exp.value;
-                }
-                if (jt && !evt.detail.path.includes('job_tab=')) {
-                    evt.detail.parameters['job_tab'] = jt.value;
-                }
+        factorySocket.onmessage = function(e) {
+            const data = JSON.parse(e.data);
+            
+            // When the server broadcasts an update, we convert it into a DOM event.
+            // HTMX components listening for 'softRefresh' on the body will automatically reload.
+            if (data.type === 'softRefresh') {
+                console.log("Real-time update received. Refreshing UI...");
+                document.body.dispatchEvent(new Event('softRefresh'));
             }
-        });
+        };
+
+        factorySocket.onclose = function(e) {
+            console.error('Factory socket closed unexpectedly');
+            // In a production environment, you would implement exponential backoff reconnection here.
+        };
     </script>
 </body>
 </html>

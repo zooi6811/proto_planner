@@ -9,20 +9,17 @@ https://docs.djangoproject.com/en/6.0/howto/deployment/asgi/
 
 import os
 from django.core.asgi import get_asgi_application
-
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'erp_core.settings')
-django_asgi_app = get_asgi_application()
-
 from channels.routing import ProtocolTypeRouter, URLRouter
 from channels.auth import AuthMiddlewareStack
-from django.urls import path
-from production.consumers import ProductionSignalConsumer
+import production.routing
+
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'erp_core.settings')
 
 application = ProtocolTypeRouter({
-    "http": django_asgi_app,
+    "http": get_asgi_application(),
     "websocket": AuthMiddlewareStack(
-        URLRouter([
-            path("ws/live/", ProductionSignalConsumer.as_asgi()),
-        ])
+        URLRouter(
+            production.routing.websocket_urlpatterns
+        )
     ),
 })

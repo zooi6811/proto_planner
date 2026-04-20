@@ -226,9 +226,45 @@
                 </table>
             </div>
             {% endif %}
+
+            <div class="panel" style="border-top: 4px solid var(--action-blue);">
+                <div class="panel-header">
+                    <h3>Live Factory Activity</h3>
+                </div>
+                <div style="background: var(--surface); padding: 15px; border-radius: var(--radius); max-height: 400px; overflow-y: auto;">
+                    {% if recent_activity_feed %}
+                        <ul style="list-style: none; padding: 0; margin: 0;">
+                            {% for log in recent_activity_feed %}
+                                <li style="border-bottom: 1px solid var(--border-soft); padding: 10px 0; font-size: 0.9rem;">
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                                        <strong>{{ log.get_action_type_display }}</strong>
+                                        <small style="color: var(--text-muted);">{{ log.timestamp|date:"H:i:s" }}</small>
+                                    </div>
+                                    <div style="color: var(--text-main);">
+                                        <span style="font-weight: bold; color: var(--brand-dark);">{{ log.operator_name }}</span> 
+                                        {% if log.action_type == 'OUTPUT_LOGGED' %}
+                                            logged {{ log.details.roll_weight_kg }}kg (Waste: {{ log.details.wastage_kg }}kg) on M/C {{ log.details.machine_no }}
+                                        {% elif log.action_type == 'MATERIAL_USED' %}
+                                            deducted {{ log.details.amount_kg }}kg of {{ log.details.material_name }}
+                                        {% elif log.action_type == 'SESSION_STARTED' %}
+                                            started M/C {{ log.details.machine_no }} for {{ log.details.job_order }}
+                                        {% elif log.action_type == 'SESSION_STOPPED' %}
+                                            stopped M/C {{ log.details.machine_no }} early
+                                        {% else %}
+                                            updated {{ log.content_type.name }}
+                                        {% endif %}
+                                    </div>
+                                </li>
+                            {% endfor %}
+                        </ul>
+                    {% else %}
+                        <p style="color: var(--text-muted); font-style: italic;">No recent activity logged.</p>
+                    {% endif %}
+                </div>
+            </div>
         </div>
 
-        <div class="panel" style="border-top: 4px solid var(--action-blue);">
+        <div class="panel" >
             <div class="panel-header" style="flex-direction: column; align-items: flex-start; gap: 15px;">
                 <div style="display: flex; justify-content: space-between; width: 100%; align-items: center;">
                     <h2 style="color: var(--action-blue); margin: 0;">🏭 Factory Jobs</h2>
@@ -338,4 +374,5 @@
             {% endif %}
         </div>
     </div>
+    
 </div>

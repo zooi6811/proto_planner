@@ -1,10 +1,49 @@
 from django.db import models, transaction
-from django.db.models import F
+from django.db.models import Manager, Q, Sum, F, DecimalField
+from django.db.models.functions import Coalesce
 from decimal import Decimal
 from django.core.validators import MinValueValidator
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 from django.contrib.auth.models import User
+from django.contrib.contenttypes.models import ContentType
+from django.contrib.contenttypes.fields import GenericForeignKey
+
+class AuditLog(models.Model):
+    """
+    Append-only global audit trail for tracking critical manufacturing actions.
+    """
+    ACTION_CHOICES = [
+        ('SESSION_STARTED', 'Session Started'),
+        ('SESSION_STOPPED', 'Session Stopped'),
+        ('SESSION_PURGED', 'Session Purged & Reconciled'),
+        ('MATERIAL_USED', 'Material Used / Deducted'),
+        ('OUTPUT_LOGGED', 'Production Output Logged'),
+        ('JOB_COMPLETED', 'Job Fully Completed'),
+    ]
+    
+    operator_name = models.CharField(max_length=50, help_text="User or operator who performed the action")
+    action_type = models.CharField(max_length=50, choices=ACTION_CHOICES)
+    
+    # Generic relation to tie the log to ANY model (JobOrder, ExtrusionSession, etc.)
+    content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
+    object_id = models.PositiveIntegerField()
+    content_object = GenericForeignKey('content_type', 'object_id')
+    
+    # Flexible storage for before/after values, reasons, or specific quantities
+    details = models.JSONField(default=dict, blank=True)
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-timestamp']
+        indexes = [
+            models.Index(fields=['content_type', 'object_id']), # Fast lookup for a specific job/session
+            models.Index(fields=['action_type']),
+            models.Index(fields=['timestamp']),
+        ]
+
+    def __str__(self):
+        return f"{self.timestamp.strftime('%Y-%m-%d %H:%M')} | {self.operator_name} | {self.action_type}"
 
 class UserProfile(models.Model):
     ROLE_CHOICES = [
@@ -95,6 +134,24 @@ class RecipeItem(models.Model):
 # JOB ORDER MANAGEMENT
 # -----------------------------------------------------------------------------
 
+class JobOrderManager(Manager):
+    """Encapsulates complex pipeline tier queries for the Control Tower."""
+    
+    def active_jobs(self, limit=10):
+        return self.filter(
+            Q(extrusion_sessions__status='ACTIVE') | Q(total_extruded_kg__gt=0),
+            is_completed=False
+        ).select_related('recipe').distinct().order_by('-id')[:limit]
+
+    def queued_jobs(self, limit=10):
+        return self.filter(
+            is_completed=False, 
+            total_extruded_kg=0
+        ).exclude(extrusion_sessions__status='ACTIVE').select_related('recipe').order_by('queue_position', 'target_delivery_date', 'id')[:limit]
+
+    def completed_jobs(self, limit=10):
+        return self.filter(is_completed=True).select_related('recipe').order_by('-id')[:limit]
+
 class JobOrder(models.Model):
     jo_number = models.CharField(max_length=20, unique=True)
     customer = models.CharField(max_length=100)
@@ -130,6 +187,8 @@ class JobOrder(models.Model):
 
     # Fulfilment & Shipping
     is_completed = models.BooleanField(default=False, help_text="Mark as true when the entire order is finished.")
+
+    objects = JobOrderManager()
 
     class Meta:
         ordering = ['is_completed', 'queue_position', 'target_delivery_date']
@@ -281,40 +340,62 @@ class MaterialUsageLog(models.Model):
     
     is_substitution = models.BooleanField(default=False) 
 
-    def save(self, *args, **kwargs):
-        is_new = self.pk is None
-        super().save(*args, **kwargs)
+    # REFACTOR: Removed the complex custom save() method. 
+    # Logic moved to a strict classmethod to prevent hidden side-effects during ORM calls.
 
-        if is_new:
-            with transaction.atomic():
-                allocation, created = MaterialAllocation.objects.get_or_create(
-                    job_order=self.job_order,
-                    material=self.material,
-                    defaults={
-                        'required_kg': Decimal('0'), 'allocated_kg': Decimal('0'), 
-                        'shortfall_kg': Decimal('0'), 'actual_used_kg': Decimal('0')
-                    }
-                )
+    @classmethod
+    def record_usage(cls, job_order, material, amount_kg, operator_name):
+        """
+        Service method to handle ad-hoc material usage safely.
+        Validates stock and handles allocation logic within a strict atomic lock.
+        """
+        with transaction.atomic():
+            # Lock the job and material to prevent concurrent modifications
+            jo = JobOrder.objects.select_for_update().get(pk=job_order.pk)
+            live_material = RawMaterial.objects.select_for_update().get(pk=material.pk)
 
-                if created or allocation.required_kg == Decimal('0'):
-                    self.is_substitution = True
-                    super().save(update_fields=['is_substitution'])
-                    
-                    live_material = RawMaterial.objects.select_for_update().get(pk=self.material.pk)
-                    live_material.current_stock_kg -= self.amount_kg
-                    live_material.save()
-                else:
-                    # Deduct from warehouse stock ONLY if usage exceeds the previously allocated amount
-                    if (allocation.actual_used_kg + self.amount_kg) > allocation.allocated_kg:
-                        overage = min(self.amount_kg, (allocation.actual_used_kg + self.amount_kg) - allocation.allocated_kg)
-                        if overage > Decimal('0'):
-                            live_material = RawMaterial.objects.select_for_update().get(pk=self.material.pk)
-                            live_material.current_stock_kg -= overage
-                            live_material.save()
+            # BUG FIX: Concurrency-safe stock check inside the atomic block
+            if amount_kg > live_material.current_stock_kg:
+                raise ValidationError(f"Insufficient stock. You requested {amount_kg}kg, but only {live_material.current_stock_kg}kg of {live_material.name} is available.")
 
-                allocation.actual_used_kg += self.amount_kg
-                allocation.save()
+            if jo.is_completed:
+                raise ValidationError("This Job Order is already closed or completed. You cannot log new data against it.")
 
+            allocation, created = MaterialAllocation.objects.get_or_create(
+                job_order=jo,
+                material=live_material,
+                defaults={
+                    'required_kg': Decimal('0'), 'allocated_kg': Decimal('0'), 
+                    'shortfall_kg': Decimal('0'), 'actual_used_kg': Decimal('0')
+                }
+            )
+
+            is_sub = False
+            if created or allocation.required_kg == Decimal('0'):
+                is_sub = True
+                live_material.current_stock_kg -= amount_kg
+            else:
+                # Deduct from warehouse stock ONLY if usage exceeds the previously allocated amount
+                if (allocation.actual_used_kg + amount_kg) > allocation.allocated_kg:
+                    overage = min(amount_kg, (allocation.actual_used_kg + amount_kg) - allocation.allocated_kg)
+                    if overage > Decimal('0'):
+                        live_material.current_stock_kg -= overage
+
+            live_material.save()
+            allocation.actual_used_kg += amount_kg
+            allocation.save()
+
+            # Create the log cleanly without triggering recursive save logic
+            log = cls.objects.create(
+                job_order=jo,
+                material=live_material,
+                amount_kg=amount_kg,
+                operator_name=operator_name,
+                is_substitution=is_sub
+            )
+            
+            return log, allocation.is_overused
+        
 # -----------------------------------------------------------------------------
 # FLOOR PRODUCTION LOGS (STATEFUL SESSIONS)
 # -----------------------------------------------------------------------------
@@ -339,6 +420,8 @@ class ExtrusionSession(models.Model):
     final_wastage_kg = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
     unaccounted_variance_kg = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
     transferred_to_next_job_kg = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    
+    version = models.PositiveIntegerField(default=1, help_text="Increments on every update to prevent multi-tab collision.")
 
     def stop_session(self):
         if self.status == 'ACTIVE':
@@ -354,6 +437,44 @@ class ExtrusionSession(models.Model):
                 total_extrusion_wastage_kg=F('total_extrusion_wastage_kg') + total_session_waste
             )
             self.save()
+    
+    # Add this method inside the ExtrusionSession class in models.py
+
+    @transaction.atomic
+    def purge_and_close(self, returned_kg, final_waste, force_discrepancy=False):
+        """
+        Protocol A: The Strict Reconciliation Gateway.
+        Safely reconciles material usage, flags discrepancies, and returns unused stock.
+        """
+        if self.status != 'ACTIVE':
+            raise ValidationError("Cannot close a session that is no longer active.")
+
+        total_reserved = sum(sm.reserved_kg for sm in self.materials.all())
+        total_consumed = self.total_output_kg + self.total_wastage_kg
+        
+        accounted_for = total_consumed + returned_kg + final_waste
+        variance = total_reserved - accounted_for
+        
+        buffer = total_reserved * Decimal('0.01')
+        
+        if abs(variance) > buffer and not force_discrepancy:
+            raise ValidationError(f"Discrepancy detected! You are missing {variance:.2f}kg of material. Please recount or flag a discrepancy.")
+            
+        self.returned_material_kg = returned_kg
+        self.final_wastage_kg = final_waste
+        
+        if force_discrepancy:
+            self.unaccounted_variance_kg = variance
+            
+        # BUG FIX: Ensure the warehouse material is locked before refunding stock
+        if returned_kg > Decimal('0'):
+            primary_material = self.materials.first()
+            if primary_material:
+                raw_mat = RawMaterial.objects.select_for_update().get(pk=primary_material.material.pk)
+                raw_mat.current_stock_kg += returned_kg
+                raw_mat.save()
+                
+        self.stop_session()
 
     def __str__(self):
         return f"{self.machine_no} | {self.job_order.jo_number} ({self.status})"
@@ -403,9 +524,12 @@ class ExtrusionLog(models.Model):
 
         if is_new:
             session = self.session
+            
+            # REFACTOR: Increment the session version atomically alongside the totals
             ExtrusionSession.objects.filter(pk=session.pk).update(
                 total_output_kg=F('total_output_kg') + self.roll_weight_kg,
-                total_wastage_kg=F('total_wastage_kg') + self.wastage_kg
+                total_wastage_kg=F('total_wastage_kg') + self.wastage_kg,
+                version=F('version') + 1  # OCC Increment
             )
 
             JobOrder.objects.filter(pk=session.job_order.pk).update(
@@ -423,6 +547,19 @@ class ExtrusionLog(models.Model):
             elif total_consumed >= total_reserved and total_reserved > Decimal('0'):
                 session.stop_session()
 
+    @classmethod
+    def get_total_output(cls, date_filter):
+        return cls.objects.filter(**date_filter).aggregate(
+            total=Coalesce(Sum('roll_weight_kg'), Decimal('0.00'), output_field=DecimalField())
+        )['total']
+
+    @classmethod
+    def get_macro_breakdown(cls, date_filter):
+        return cls.objects.filter(**date_filter).values(
+            jo_num=F('session__job_order__jo_number'),
+            customer=F('session__job_order__customer')
+        ).annotate(total=Sum('roll_weight_kg')).order_by('-total')
+
 class CuttingSession(models.Model):
     job_order = models.ForeignKey(JobOrder, on_delete=models.CASCADE, related_name='cutting_sessions')
     machine_no = models.CharField(max_length=10)
@@ -438,6 +575,8 @@ class CuttingSession(models.Model):
     
     total_output_kg = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
     total_wastage_kg = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+
+    version = models.PositiveIntegerField(default=1)
 
     def stop_session(self, calculate_wastage=True):
         """Terminates the session and handles wastage calculation."""
@@ -488,21 +627,32 @@ class CuttingLog(models.Model):
         if is_new:
             session = self.session
             
-            # 1. Add output to the Session
+            # REFACTOR: Increment the cutting session version atomically
             CuttingSession.objects.filter(pk=session.pk).update(
-                total_output_kg=F('total_output_kg') + self.output_kg
+                total_output_kg=F('total_output_kg') + self.output_kg,
+                version=F('version') + 1  # OCC Increment
             )
             
-            # 2. Add output to the main Job Order
             JobOrder.objects.filter(pk=session.job_order.pk).update(
                 total_cut_kg=F('total_cut_kg') + self.output_kg
             )
             
-            # 3. Check if the roll is fully consumed
             session.refresh_from_db()
             if session.total_output_kg >= session.input_roll_weight_kg:
-                # If output matches or exceeds input, complete it (wastage will calculate as 0)
                 session.stop_session(calculate_wastage=True)
+
+    @classmethod
+    def get_total_output(cls, date_filter):
+        return cls.objects.filter(**date_filter).aggregate(
+            total=Coalesce(Sum('output_kg'), Decimal('0.00'), output_field=DecimalField())
+        )['total']
+
+    @classmethod
+    def get_macro_breakdown(cls, date_filter):
+        return cls.objects.filter(**date_filter).values(
+            jo_num=F('session__job_order__jo_number'),
+            customer=F('session__job_order__customer')
+        ).annotate(total=Sum('output_kg')).order_by('-total')
 
 class PackingLog(models.Model):
     job_order = models.ForeignKey(JobOrder, on_delete=models.CASCADE, related_name='packing_logs')
@@ -528,6 +678,21 @@ class PackingLog(models.Model):
             JobOrder.objects.filter(pk=self.job_order.pk).update(
                 total_packed_kg=F('total_packed_kg') + total_weight
             )
+
+    @classmethod
+    def get_total_output(cls, date_filter):
+        return cls.objects.filter(**date_filter).annotate(
+            weight=F('packing_size_kg') * F('quantity_packed')
+        ).aggregate(
+            total=Coalesce(Sum('weight'), Decimal('0.00'), output_field=DecimalField())
+        )['total']
+
+    @classmethod
+    def get_macro_breakdown(cls, date_filter):
+        return cls.objects.filter(**date_filter).values(
+            jo_num=F('job_order__jo_number'),
+            customer=F('job_order__customer')
+        ).annotate(total=Sum(F('packing_size_kg') * F('quantity_packed'))).order_by('-total')
 
 class DispatchLog(models.Model):
     job_order = models.ForeignKey(JobOrder, on_delete=models.CASCADE, related_name='shipments')

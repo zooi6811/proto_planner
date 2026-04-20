@@ -8,7 +8,7 @@ from django.utils.html import escape
 from decimal import Decimal, InvalidOperation
 from .models import (JobOrder, ExtrusionLog, CuttingLog, PackingLog, RawMaterial, 
     MaterialUsageLog, MaterialAllocation, MaterialCategory, UserProfile, CuttingSession,
-    ExtrusionSession, SessionMaterial)
+    ExtrusionSession, SessionMaterial, AuditLog)
 from django.utils import timezone
 import uuid
 from datetime import timedelta
@@ -22,6 +22,8 @@ from django.contrib.auth.models import User
 from django.views.decorators.cache import never_cache
 import json
 from django.template.loader import render_to_string
+from functools import wraps
+from django.contrib.contenttypes.models import ContentType
 
 def gateway_login(request):
     if request.user.is_authenticated:
@@ -115,6 +117,30 @@ def trigger_packing_refresh(response, job_id, is_completed):
     response['HX-Trigger'] = json.dumps(trigger_data)
     return response
 
+# --- REFACTOR: New Unified HTMX Response Builder ---
+def htmx_toast_response(message, alert_type="success", refresh_url=None, refresh_target=None):
+    """
+    Consolidates toast rendering, HTTP response creation, and optional HTMX trigger payloads
+    into a single, DRY helper function.
+    """
+    response = HttpResponse(render_toast(message, alert_type, use_oob=False))
+    if refresh_url and refresh_target:
+        return trigger_refresh(response, refresh_url, refresh_target)
+    return response
+
+# --- REFACTOR: New Permission Decorator ---
+def require_logging_permission(view_func):
+    """
+    Decorator that strictly enforces floor operator logging permissions.
+    Automatically intercepts unauthorised requests and returns a standard HTMX error toast.
+    """
+    @wraps(view_func)
+    def _wrapped_view(request, *args, **kwargs):
+        if not has_logging_permission(request.user):
+            return htmx_toast_response("Unauthorised: Only Operators and Admins can perform this action.", "error")
+        return view_func(request, *args, **kwargs)
+    return _wrapped_view
+
 def parse_decimal(value):
     """Safely coerces form inputs into precise Decimals, bypassing TypeError crashes."""
     if value is None or str(value).strip() == '':
@@ -199,30 +225,40 @@ def submit_material_usage(request):
 
         material = get_object_or_404(RawMaterial, id=material_id)
         job_order = get_object_or_404(JobOrder, id=jo_id)
-
-        if job_order.is_completed:
-            return HttpResponse(render_toast("This Job Order is already closed or completed. You cannot log new data against it.", "error"))
-
-        if amount_kg > material.current_stock_kg:
-            return HttpResponse(render_toast(f"Insufficient stock. You requested {amount_kg}kg, but only {material.current_stock_kg}kg of {material.name} is available.", "error"))
-
         operator = request.user.username if request.user.is_authenticated else "Unknown Operator"
 
-        usage_log = MaterialUsageLog.objects.create(
-            job_order=job_order,
-            material=material,
-            amount_kg=amount_kg,
-            operator_name=operator
-        )
-        
-        allocation = MaterialAllocation.objects.filter(job_order=job_order, material=material).first()
-        if allocation and allocation.is_overused:
-            warning_msg = render_toast(f"Material logged, but you have now exceeded the allocated formula limit for {material.name}!", "warning")
-            return HttpResponse(warning_msg)
-            
-        success_msg = render_toast(f"Successfully logged {amount_kg}kg of {material.name}.", "success")
-        return HttpResponse(success_msg)
+        try:
+            # REFACTOR: View is now slimmed down. Business logic and validation delegated to the model.
+            log, is_overused = MaterialUsageLog.record_usage(
+                job_order=job_order,
+                material=material,
+                amount_kg=amount_kg,
+                operator_name=operator
+            )
 
+            # Executed only if the transaction above succeeds without raising a ValidationError
+            AuditLog.objects.create(
+                operator_name=operator,
+                action_type='MATERIAL_USED',
+                content_object=job_order,
+                details={
+                    'material_name': material.name,
+                    'amount_kg': str(amount_kg),
+                    'is_overused_flag': is_overused,
+                    'remaining_warehouse_stock': str(material.current_stock_kg)
+                }
+            )
+
+            if is_overused:
+                return htmx_toast_response(f"Material logged, but you have now exceeded the allocated formula limit for {material.name}!", "warning")
+                
+            return htmx_toast_response(f"Successfully logged {amount_kg}kg of {material.name}.", "success")
+        
+        except ValidationError as e:
+            # Catching the errors raised from the transactional block
+            error_message = e.messages[0] if hasattr(e, 'messages') else str(e)
+            return HttpResponse(render_toast(error_message, "error"))
+        
 @login_required(login_url='login')
 def operator_dashboard(request):
     # The default tab is Extrusion, so we must load the properly sorted Extrusion queue initially
@@ -286,25 +322,21 @@ def load_machine_state(request, machine_no=None):
             'initial_row_id': initial_row_id
         })
     
+# --- REFACTOR: Decorator applied, boilerplate removed ---
+@require_logging_permission
 def start_extrusion_session(request):
     """Locks the machine, reserves the material, and starts the job."""
-    if not has_logging_permission(request.user):
-        return HttpResponse(render_toast("Unauthorised: Only Operators and Admins can start sessions.", "error", use_oob=False))
-    
     if request.method == "POST":
         jo_id = request.POST.get('job_order')
         machine_no = request.POST.get('machine_no')
         shift = request.POST.get('shift')
-        
-        def reload_with_error(msg):
-            return HttpResponse(render_toast(msg, "error", use_oob=False))
 
         if not jo_id:
-            return reload_with_error("Please select a Job Order from the list.")
+            return htmx_toast_response("Please select a Job Order from the list.", "error")
 
         target_amount = parse_decimal(request.POST.get('target_amount'))
         if target_amount is None or target_amount <= Decimal('0'):
-            return reload_with_error("Invalid target amount. Please check your numbers.")
+            return htmx_toast_response("Invalid target amount. Please check your numbers.", "error")
             
         material_ids = request.POST.getlist('material_ids')
         reserved_amounts_raw = request.POST.getlist('reserved_amounts')
@@ -314,7 +346,7 @@ def start_extrusion_session(request):
             if amt.strip():
                 parsed = parse_decimal(amt)
                 if parsed is None or parsed <= Decimal('0'):
-                    return reload_with_error("Invalid material reservation amounts. Ensure they are numbers.")
+                    return htmx_toast_response("Invalid material reservation amounts. Ensure they are numbers.", "error")
                 reserved_amounts.append(parsed)
             else:
                 reserved_amounts.append(Decimal('0'))
@@ -322,17 +354,20 @@ def start_extrusion_session(request):
         total_reserved = sum(reserved_amounts)
 
         if total_reserved < target_amount:
-            return reload_with_error(f"Total reserved material ({total_reserved}kg) cannot be less than target ({target_amount}kg).")
+            return htmx_toast_response(f"Total reserved material ({total_reserved}kg) cannot be less than target ({target_amount}kg).", "error")
         
         job_order = get_object_or_404(JobOrder, id=jo_id)
 
         if job_order.is_completed: 
-            return reload_with_error("This Job Order is already closed or completed.")
+            return htmx_toast_response("This Job Order is already closed or completed.", "error")
         
         operator = request.user.username if request.user.is_authenticated else "Unknown Operator"
 
         try:
             with transaction.atomic():
+                if ExtrusionSession.objects.select_for_update().filter(machine_no=machine_no, status='ACTIVE').exists():
+                    return htmx_toast_response(f"Conflict: Machine {machine_no} is already running an active session.", "error")
+
                 session = ExtrusionSession.objects.create(
                     job_order=job_order, machine_no=machine_no, shift=shift, 
                     target_amount_kg=target_amount, operator_name=operator
@@ -351,68 +386,104 @@ def start_extrusion_session(request):
                         SessionMaterial.objects.create(
                             session=session, material=mat, reserved_kg=parsed_amount
                         )
+                
+                AuditLog.objects.create(
+                    operator_name=operator,
+                    action_type='SESSION_STARTED',
+                    content_object=session,
+                    details={
+                        'machine_no': machine_no,
+                        'job_order': job_order.jo_number,
+                        'target_amount_kg': str(target_amount),
+                        'total_reserved_kg': str(total_reserved)
+                    }
+                )
+
         except ValidationError as e:
             error_msg = " ".join(e.messages) if hasattr(e, 'messages') else str(e)
-            return reload_with_error(error_msg)
+            return htmx_toast_response(error_msg, "error")
 
-        success_toast = render_toast(f"Session locked in on Machine {machine_no}. Extrusion active.", "success", use_oob=False)
-        response = HttpResponse(success_toast)
-        
-        return trigger_refresh(response, f"/load-machine-state/{machine_no}/", "#machine-workspace")
-    
+        # REFACTOR: Unified response handling
+        return htmx_toast_response(
+            f"Session locked in on Machine {machine_no}. Extrusion active.", 
+            "success", 
+            f"/load-machine-state/{machine_no}/", 
+            "#machine-workspace"
+        )
+
+# --- REFACTOR: Decorator applied, boilerplate removed ---
+@require_logging_permission
 def log_session_roll(request):
     """Operator logs a roll to their currently active session."""
-    if not has_logging_permission(request.user):
-        return HttpResponse(render_toast("Unauthorised: Only Operators and Admins can log rolls.", "error", use_oob=False))
-    
     if request.method == "POST":
         session_id = request.POST.get('session_id')
 
-        def reload_with_error(msg):
-            return HttpResponse(render_toast(msg, "error", use_oob=False))
-
         if not session_id:
-            return reload_with_error("No active session found.")
+            return htmx_toast_response("No active session found.", "error")
             
         session = get_object_or_404(ExtrusionSession, id=session_id)
 
         if session.status != 'ACTIVE':
-            return reload_with_error("This machine session is no longer active. Please start a new run.")
+            return htmx_toast_response("This machine session is no longer active. Please start a new run.", "error")
+        
+        # NEW OCC SAFEGUARD: Compare submitted version against DB version
+        submitted_version = request.POST.get('session_version')
+        if submitted_version and int(submitted_version) != session.version:
+            return htmx_toast_response(
+                "Stale Data Error: This session was updated in another tab or by another operator. Please refresh the machine state.", 
+                "error"
+            )
+        
+        # Extract the operator for the audit log
+        operator = request.user.username if request.user.is_authenticated else "Unknown Operator"
         
         roll_weight = parse_decimal(request.POST.get('roll_weight'))
         wastage = parse_decimal(request.POST.get('wastage')) or Decimal('0')
         
         if roll_weight is None or roll_weight <= Decimal('0'):
-            return reload_with_error("Roll weight must be strictly greater than zero.")
+            return htmx_toast_response("Roll weight must be strictly greater than zero.", "error")
         
         if roll_weight > Decimal('500'): 
-            return reload_with_error(f"{roll_weight}kg exceeds maximum physical roll capacity. Check for typos.")
+            return htmx_toast_response(f"{roll_weight}kg exceeds maximum physical roll capacity. Check for typos.", "error")
             
         if wastage < Decimal('0') or wastage > roll_weight:
-            return reload_with_error("Wastage cannot be negative or greater than the total roll weight itself.")
+            return htmx_toast_response("Wastage cannot be negative or greater than the total roll weight itself.", "error")
 
         try:
             ExtrusionLog.objects.create(session=session, roll_weight_kg=roll_weight, wastage_kg=wastage)
+            
+            # NEW: Audit Trail for Machine Output & Wastage
+            AuditLog.objects.create(
+                operator_name=operator,
+                action_type='OUTPUT_LOGGED',
+                content_object=session,
+                details={
+                    'machine_no': session.machine_no,
+                    'job_order': session.job_order.jo_number,
+                    'roll_weight_kg': str(roll_weight),
+                    'wastage_kg': str(wastage),
+                    'session_version_after_log': session.version + 1
+                }
+            )
         except ValidationError as e:
             error_msg = " ".join(e.messages) if hasattr(e, 'messages') else str(e)
-            return reload_with_error(error_msg)
+            return htmx_toast_response(error_msg, "error")
         
         session.refresh_from_db() 
         
         if session.status == 'COMPLETED':
-            if session.total_output_kg >= session.target_amount_kg:
-                success_msg = render_toast("Target Reached! Session Auto-Completed.", "success", use_oob=False)
-            else:
-                success_msg = render_toast("Material Depleted! Session Auto-Completed.", "warning", use_oob=False)
+            msg, tag = ("Target Reached! Session Auto-Completed.", "success") if session.total_output_kg >= session.target_amount_kg else ("Material Depleted! Session Auto-Completed.", "warning")
         else:
-            success_msg = render_toast(f"Successfully logged {roll_weight}kg roll.", "success", use_oob=False)
+            msg, tag = (f"Successfully logged {roll_weight}kg roll.", "success")
             
-        response = HttpResponse(success_msg)
+        # REFACTOR: Unified response handling
+        response = htmx_toast_response(msg, tag, f"/load-machine-state/{session.machine_no}/", "#machine-workspace")
+        # Keep specific HTMX behaviour for this particular view
         response['HX-Retarget'] = 'body'
         response['HX-Reswap'] = 'beforeend'
         
-        return trigger_refresh(response, f"/load-machine-state/{session.machine_no}/", "#machine-workspace")
-        
+        return response
+    
 @transaction.atomic
 def handover_extrusion_shift(request, session_id):
     """Protocol B: Seamlessly transfers an active session to a new operator."""
@@ -469,38 +540,24 @@ def rollover_extrusion_session(request, session_id):
 def purge_and_close_session(request, session_id):
     """Protocol A: The Strict Reconciliation Gateway for emptying a machine."""
     if request.method == 'POST':
-        session = get_object_or_404(ExtrusionSession, id=session_id, status='ACTIVE')
+        # REFACTOR: View now delegates entirely to the model's atomic method
+        session = get_object_or_404(ExtrusionSession, id=session_id)
         
-        returned_kg = Decimal(request.POST.get('returned_material_kg', '0'))
-        final_waste = Decimal(request.POST.get('final_wastage_kg', '0'))
+        # Using the existing parse_decimal utility for safer casting
+        returned_kg = parse_decimal(request.POST.get('returned_material_kg', '0')) or Decimal('0')
+        final_waste = parse_decimal(request.POST.get('final_wastage_kg', '0')) or Decimal('0')
         force_discrepancy = request.POST.get('submit_with_discrepancy') == 'true'
         
-        total_reserved = sum(sm.reserved_kg for sm in session.materials.all())
-        total_consumed = session.total_output_kg + session.total_wastage_kg
-        
-        accounted_for = total_consumed + returned_kg + final_waste
-        variance = total_reserved - accounted_for
-        
-        buffer = total_reserved * Decimal('0.01')
-        
-        if abs(variance) > buffer and not force_discrepancy:
-            error = f"Discrepancy detected! You are missing {variance}kg of material. Please recount or flag a discrepancy."
-            return HttpResponse(render_toast(error, "error", use_oob=False))
-            
-        session.returned_material_kg = returned_kg
-        session.final_wastage_kg = final_waste
-        
-        if force_discrepancy:
-            session.unaccounted_variance_kg = variance
-            
-        if returned_kg > 0:
-            primary_material = session.materials.first()
-            if primary_material:
-                raw_mat = primary_material.material
-                raw_mat.current_stock_kg += returned_kg
-                raw_mat.save()
-                
-        session.stop_session()
+        try:
+            session.purge_and_close(
+                returned_kg=returned_kg,
+                final_waste=final_waste,
+                force_discrepancy=force_discrepancy
+            )
+        except ValidationError as e:
+            # Catch the model's domain error and return it to the UI
+            error_msg = e.messages[0] if hasattr(e, 'messages') else str(e)
+            return HttpResponse(render_toast(error_msg, "error", use_oob=False))
         
         msg = "Session Closed with Discrepancy Flag." if force_discrepancy else "Session Cleanly Closed."
         toast_type = "warning" if force_discrepancy else "success"
@@ -508,7 +565,7 @@ def purge_and_close_session(request, session_id):
         success_toast = render_toast(msg, toast_type, use_oob=False)
         response = HttpResponse(success_toast)
         return trigger_refresh(response, f"/load-machine-state/{session.machine_no}/", "#machine-workspace")
-    
+
 @login_required(login_url='login')
 def complete_extrusion_session(request, session_id):
     """Operator successfully completes the extrusion job."""
@@ -523,19 +580,31 @@ def complete_extrusion_session(request, session_id):
         response = HttpResponse(success_toast)
         return trigger_refresh(response, f"/load-machine-state/{machine_no}/", "#machine-workspace")
 
+@require_logging_permission
 def stop_extrusion_session(request, session_id):
     """Operator manually terminates the job early."""
-    if not has_logging_permission(request.user):
-        return HttpResponse(render_toast("Unauthorised: Only Operators and Admins can terminate sessions.", "error", use_oob=False))
-    
     session = get_object_or_404(ExtrusionSession, id=session_id)
+    operator = request.user.username if request.user.is_authenticated else "Unknown Operator"
     
     machine_no = session.machine_no
     shift = session.shift
     
     session.stop_session()
+
+    # NEW: Log the manual override/early termination
+    AuditLog.objects.create(
+        operator_name=operator,
+        action_type='SESSION_STOPPED',
+        content_object=session,
+        details={
+            'machine_no': machine_no,
+            'job_order': session.job_order.jo_number,
+            'reason': 'Manual early termination',
+            'total_output_kg_at_stop': str(session.total_output_kg)
+        }
+    )
     
-    warning_toast = render_toast(f"Session on Machine {machine_no} terminated early.", "warning", use_oob=False)
+    warning_toast = htmx_toast_response(f"Session on Machine {machine_no} terminated early.", "warning", use_oob=False)
     
     ajax_url = f"/load-machine-state/{machine_no}/?prefill_machine={machine_no}&prefill_shift={shift}"
     response = HttpResponse(warning_toast)
@@ -848,22 +917,7 @@ def control_tower(request):
     date_filter = {'timestamp__date': start_date} if timeframe == 'daily' else {'timestamp__date__gte': start_date}
     session_date_filter = {'end_time__date': start_date} if timeframe == 'daily' else {'end_time__date__gte': start_date}
 
-    # 1. Aggregate KPI Totals (Protected with Coalesce to eliminate 'None' bugs)
-    total_extruded = ExtrusionLog.objects.filter(**date_filter).aggregate(
-        total=Coalesce(Sum('roll_weight_kg'), Decimal('0.00'), output_field=DecimalField())
-    )['total']
-        
-    total_cut = CuttingLog.objects.filter(**date_filter).aggregate(
-        total=Coalesce(Sum('output_kg'), Decimal('0.00'), output_field=DecimalField())
-    )['total']
-        
-    total_packed = PackingLog.objects.filter(**date_filter).annotate(
-        weight=F('packing_size_kg') * F('quantity_packed')
-    ).aggregate(
-        total=Coalesce(Sum('weight'), Decimal('0.00'), output_field=DecimalField())
-    )['total']
-
-    # 2. Global Wastage Summaries for the Timeframe
+    # REFACTOR: Delegated Global Wastage Summaries to the Session Models
     total_ext_waste = ExtrusionSession.objects.filter(**session_date_filter, status='COMPLETED').aggregate(
         total=Coalesce(Sum(F('total_wastage_kg') + F('final_wastage_kg')), Decimal('0.00'), output_field=DecimalField())
     )['total']
@@ -872,70 +926,42 @@ def control_tower(request):
         total=Coalesce(Sum('total_wastage_kg'), Decimal('0.00'), output_field=DecimalField())
     )['total']
 
-    global_wastage = total_ext_waste + total_cut_waste
-
-    # 3. Macro Breakdowns (Restored)
-    extrusion_breakdown = ExtrusionLog.objects.filter(**date_filter).values(
-        jo_num=F('session__job_order__jo_number'),
-        customer=F('session__job_order__customer')
-    ).annotate(total=Sum('roll_weight_kg')).order_by('-total')
-
-    cutting_breakdown = CuttingLog.objects.filter(**date_filter).values(
-        jo_num=F('session__job_order__jo_number'),
-        customer=F('session__job_order__customer')
-    ).annotate(total=Sum('output_kg')).order_by('-total')
-
-    packing_breakdown = PackingLog.objects.filter(**date_filter).values(
-        jo_num=F('job_order__jo_number'),
-        customer=F('job_order__customer')
-    ).annotate(total=Sum(F('packing_size_kg') * F('quantity_packed'))).order_by('-total')
-
-    # 4. Live Operational Context (Restored)
-    discrepancy_alerts = ExtrusionSession.objects.filter(
-        unaccounted_variance_kg__gt=0
-    ).select_related('job_order').order_by('-end_time')[:5]
-
-    active_machines = ExtrusionSession.objects.filter(status='ACTIVE').select_related('job_order')
-    active_cutting_machines = CuttingSession.objects.filter(status='ACTIVE').select_related('job_order')
-    low_stock_materials = RawMaterial.objects.filter(current_stock_kg__lte=F('reorder_point_kg'))
-    purchasing_shortfalls = MaterialAllocation.objects.filter(shortfall_kg__gt=0, job_order__is_completed=False)
-
-    # 5. Optimised Pipeline Tiers (Using select_related to prevent N+1 Queries)
-    active_jobs = JobOrder.objects.filter(
-        Q(extrusion_sessions__status='ACTIVE') | Q(total_extruded_kg__gt=0),
-        is_completed=False
-    ).select_related('recipe').distinct().order_by('-id')[:10]
-
-    queued_jobs = JobOrder.objects.filter(
-        is_completed=False, 
-        total_extruded_kg=0
-    ).exclude(extrusion_sessions__status='ACTIVE').select_related('recipe').order_by('queue_position', 'target_delivery_date', 'id')[:10]
-    
-    completed_jobs = JobOrder.objects.filter(is_completed=True).select_related('recipe').order_by('-id')[:10]
-
+    # REFACTOR: Delegating complex aggregation queries to the Models/Managers
     context = {
         'timeframe': timeframe,
         'expanded_sections': expanded_sections,
         'expanded_param': expanded_param,
         'job_tab': job_tab,
         'label_prefix': label_prefix,
-        'total_extruded': total_extruded,
-        'total_cut': total_cut,
-        'total_packed': total_packed,
-        'total_ext_waste': total_ext_waste,       # NEW
-        'total_cut_waste': total_cut_waste,       # NEW
-        'global_wastage': global_wastage,         # NEW
-        'extrusion_breakdown': extrusion_breakdown,
-        'cutting_breakdown': cutting_breakdown,
-        'packing_breakdown': packing_breakdown,
-        'active_machines': active_machines,
-        'active_cutting_machines': active_cutting_machines,
-        'low_stock_materials': low_stock_materials,
-        'purchasing_shortfalls': purchasing_shortfalls,
-        'discrepancy_alerts': discrepancy_alerts,
-        'queued_jobs': queued_jobs,
-        'active_jobs': active_jobs,
-        'completed_jobs': completed_jobs,
+        
+        # 1. Aggregate KPI Totals
+        'total_extruded': ExtrusionLog.get_total_output(date_filter),
+        'total_cut': CuttingLog.get_total_output(date_filter),
+        'total_packed': PackingLog.get_total_output(date_filter),
+        
+        # 2. Global Wastage
+        'total_ext_waste': total_ext_waste,       
+        'total_cut_waste': total_cut_waste,       
+        'global_wastage': total_ext_waste + total_cut_waste,         
+        
+        # 3. Macro Breakdowns
+        'extrusion_breakdown': ExtrusionLog.get_macro_breakdown(date_filter),
+        'cutting_breakdown': CuttingLog.get_macro_breakdown(date_filter),
+        'packing_breakdown': PackingLog.get_macro_breakdown(date_filter),
+        
+        # 4. Live Operational Context
+        'active_machines': ExtrusionSession.objects.filter(status='ACTIVE').select_related('job_order'),
+        'active_cutting_machines': CuttingSession.objects.filter(status='ACTIVE').select_related('job_order'),
+        'low_stock_materials': RawMaterial.objects.filter(current_stock_kg__lte=F('reorder_point_kg')),
+        'purchasing_shortfalls': MaterialAllocation.objects.filter(shortfall_kg__gt=0, job_order__is_completed=False),
+        'discrepancy_alerts': ExtrusionSession.objects.filter(unaccounted_variance_kg__gt=0).select_related('job_order').order_by('-end_time')[:5],
+        
+        # 5. Optimised Pipeline Tiers (Using custom JobOrderManager)
+        'queued_jobs': JobOrder.objects.queued_jobs(limit=10),
+        'active_jobs': JobOrder.objects.active_jobs(limit=10),
+        'completed_jobs': JobOrder.objects.completed_jobs(limit=10),
+
+        'recent_activity_feed': AuditLog.objects.all()[:15],
     }
     
     if getattr(request, 'htmx', False) or request.headers.get('HX-Request') == 'true':
