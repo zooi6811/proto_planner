@@ -97,5 +97,50 @@
             clickedBtn.classList.add('active');
         }
     </script>
+    <script>
+        // Handles the standard workspace refreshes (Extrusion & Cutting)
+        document.body.addEventListener('softRefresh', function(e) {
+            htmx.ajax('GET', e.detail.url, {target: e.detail.target});
+        });
+
+        // Handles the complex DOM logic for the Packing UI
+        document.body.addEventListener('packingRefresh', function(e) {
+            // 1. Clear input fields
+            const ps = document.querySelector('input[name="packing_size"]'); if(ps) ps.value='';
+            const qty = document.querySelector('input[name="quantity"]'); if(qty) qty.value='';
+            
+            const data = e.detail;
+            
+            // 2. Reload the radio list using the current search parameters
+            const searchInput = document.querySelector('input[name="q"]');
+            if (searchInput) {
+                const url = searchInput.getAttribute('hx-get');
+                const targetId = searchInput.getAttribute('hx-target').replace('#', '');
+                const query = searchInput.value || '';
+                
+                htmx.ajax('GET', url + '&q=' + encodeURIComponent(query), {target: '#' + targetId}).then(() => {
+                    // 3. Update the job spec UI based on completion status
+                    if (!data.isCompleted) {
+                        const radio = document.getElementById('jo_' + data.jobId);
+                        if (radio) radio.checked = true;
+                        
+                        fetch(`/get-job-specs/${data.jobId}/?dept=packing`)
+                            .then(response => response.text())
+                            .then(html => {
+                                const specContainer = document.getElementById('job-specs-container');
+                                if (specContainer) specContainer.innerHTML = html;
+                            });
+                    } else {
+                        const specContainer = document.getElementById('job-specs-container');
+                        if (specContainer) {
+                            specContainer.innerHTML = '<div style="padding: 40px 20px; text-align: center; color: var(--text-muted); border: 2px dashed var(--border-soft); border-radius: var(--radius); margin-bottom: 20px;"><div style="font-size: 2.5rem; margin-bottom: 15px; opacity: 0.5;">✅</div><p style="font-weight: bold; text-transform: uppercase; margin: 0; font-size: 1.1rem;">Order Fulfilled</p><p style="font-size: 0.9rem; color: var(--border-hard); margin-top: 8px;">Select a new job to continue.</p></div>';
+                        }
+                        const progressBar = document.getElementById('active-progress-bar');
+                        if (progressBar) progressBar.innerHTML = '';
+                    }
+                });
+            }
+        });
+    </script>
 </body>
 </html>

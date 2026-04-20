@@ -1,6 +1,7 @@
 from django.shortcuts import render, get_object_or_404, redirect
 from django.http import HttpResponse
-from django.db.models import Sum, F, Q
+from django.db.models import Sum, F, Q, DecimalField
+from django.db.models.functions import Coalesce
 from django.db import transaction
 from django.core.exceptions import ValidationError
 from django.utils.html import escape
@@ -19,6 +20,8 @@ from django.contrib.auth.decorators import login_required, user_passes_test
 from django.contrib.auth import logout as django_logout
 from django.contrib.auth.models import User
 from django.views.decorators.cache import never_cache
+import json
+from django.template.loader import render_to_string
 
 def gateway_login(request):
     if request.user.is_authenticated:
@@ -76,38 +79,41 @@ def register_user(request):
             
     return render(request, 'production/register.html')
 
-def get_toast_popup(message, alert_type="error", use_oob=True):
-    """
-    Generates a floating banner using pure CSS animations.
-    When use_oob=False, it swaps perfectly into standard targets (like #feedback-container)
-    which natively overwrites old toasts and permanently prevents stacking bugs.
-    """
-    safe_message = escape(str(message))
-    
-    # Configure colours and icons dynamically
+def render_toast(message, alert_type="error", use_oob=True):
+    """Renders the toast notification via a proper Django template."""
     themes = {
         "error": {"bg": "#dc3545", "text": "white", "icon": "⚠️"},
         "success": {"bg": "#28a745", "text": "white", "icon": "✅"},
         "warning": {"bg": "#ffc107", "text": "#333", "icon": "⚠️"}
     }
     theme = themes.get(alert_type, themes["error"])
+    return render_to_string('production/partials/toast.html', {
+        'message': escape(str(message)),
+        'theme': theme,
+        'use_oob': use_oob
+    })
 
-    oob_attr = 'hx-swap-oob="beforeend:body"' if use_oob else ''
+def trigger_refresh(response, url, target):
+    """Attaches a robust HX-Trigger payload to drive frontend refreshes without inline scripts."""
+    trigger_data = {
+        "softRefresh": {
+            "url": url,
+            "target": target
+        }
+    }
+    response['HX-Trigger'] = json.dumps(trigger_data)
+    return response
 
-    # Using pure CSS keyframes guarantees it fades away without relying on JS execution
-    return f"""
-    <div {oob_attr} style="position: fixed; top: 20px; right: 20px; z-index: 9999; padding: 15px 25px; background-color: {theme['bg']}; color: {theme['text']}; border-radius: 4px; font-size: 15px; font-weight: bold; box-shadow: 0 4px 10px rgba(0,0,0,0.3); animation: toastFadeOut 4s forwards; pointer-events: none;">
-        {theme['icon']} {safe_message}
-        <style>
-            @keyframes toastFadeOut {{
-                0% {{ opacity: 0; transform: translateY(-10px); }}
-                10% {{ opacity: 1; transform: translateY(0); }}
-                80% {{ opacity: 1; transform: translateY(0); }}
-                100% {{ opacity: 0; transform: translateY(-10px); pointer-events: none; }}
-            }}
-        </style>
-    </div>
-    """
+def trigger_packing_refresh(response, job_id, is_completed):
+    """Sends a specialised event payload to drive the packing UI updates."""
+    trigger_data = {
+        "packingRefresh": {
+            "jobId": job_id,
+            "isCompleted": is_completed
+        }
+    }
+    response['HX-Trigger'] = json.dumps(trigger_data)
+    return response
 
 def parse_decimal(value):
     """Safely coerces form inputs into precise Decimals, bypassing TypeError crashes."""
@@ -178,29 +184,28 @@ def get_materials_by_category(request):
 def submit_material_usage(request):
     """Submits ad-hoc material usage, triggering relevant visual alerts."""
     if not has_logging_permission(request.user):
-        return HttpResponse(get_toast_popup("Unauthorised: Only Operators and Admins can log material usage.", "error"))
+        return HttpResponse(render_toast("Unauthorised: Only Operators and Admins can log material usage.", "error"))
     
     if request.method == "POST":
         jo_id = request.POST.get('job_order')
         material_id = request.POST.get('material_id')
         
         if not jo_id or not material_id:
-            return HttpResponse(get_toast_popup("Please select both a Job Order and a Material.", "error"))
+            return HttpResponse(render_toast("Please select both a Job Order and a Material.", "error"))
 
         amount_kg = parse_decimal(request.POST.get('amount_kg'))
         if amount_kg is None or amount_kg <= Decimal('0'):
-            return HttpResponse(get_toast_popup("Invalid amount. Please enter positive numbers only.", "error"))
+            return HttpResponse(render_toast("Invalid amount. Please enter positive numbers only.", "error"))
 
         material = get_object_or_404(RawMaterial, id=material_id)
         job_order = get_object_or_404(JobOrder, id=jo_id)
 
         if job_order.is_completed:
-            return HttpResponse(get_toast_popup("This Job Order is already closed or completed. You cannot log new data against it.", "error"))
+            return HttpResponse(render_toast("This Job Order is already closed or completed. You cannot log new data against it.", "error"))
 
         if amount_kg > material.current_stock_kg:
-            return HttpResponse(get_toast_popup(f"Insufficient stock. You requested {amount_kg}kg, but only {material.current_stock_kg}kg of {material.name} is available.", "error"))
+            return HttpResponse(render_toast(f"Insufficient stock. You requested {amount_kg}kg, but only {material.current_stock_kg}kg of {material.name} is available.", "error"))
 
-        # Accurately trace the logged-in user rather than hardcoding "Extrusion Op"
         operator = request.user.username if request.user.is_authenticated else "Unknown Operator"
 
         usage_log = MaterialUsageLog.objects.create(
@@ -212,10 +217,10 @@ def submit_material_usage(request):
         
         allocation = MaterialAllocation.objects.filter(job_order=job_order, material=material).first()
         if allocation and allocation.is_overused:
-            warning_msg = get_toast_popup(f"Material logged, but you have now exceeded the allocated formula limit for {material.name}!", "warning")
+            warning_msg = render_toast(f"Material logged, but you have now exceeded the allocated formula limit for {material.name}!", "warning")
             return HttpResponse(warning_msg)
             
-        success_msg = get_toast_popup(f"Successfully logged {amount_kg}kg of {material.name}.", "success")
+        success_msg = render_toast(f"Successfully logged {amount_kg}kg of {material.name}.", "success")
         return HttpResponse(success_msg)
 
 @login_required(login_url='login')
@@ -284,7 +289,7 @@ def load_machine_state(request, machine_no=None):
 def start_extrusion_session(request):
     """Locks the machine, reserves the material, and starts the job."""
     if not has_logging_permission(request.user):
-        return HttpResponse(get_toast_popup("Unauthorised: Only Operators and Admins can start sessions.", "error", use_oob=False))
+        return HttpResponse(render_toast("Unauthorised: Only Operators and Admins can start sessions.", "error", use_oob=False))
     
     if request.method == "POST":
         jo_id = request.POST.get('job_order')
@@ -292,8 +297,7 @@ def start_extrusion_session(request):
         shift = request.POST.get('shift')
         
         def reload_with_error(msg):
-            # THE FIX: use_oob=False safely overwrites old errors in the container natively
-            return HttpResponse(get_toast_popup(msg, "error", use_oob=False))
+            return HttpResponse(render_toast(msg, "error", use_oob=False))
 
         if not jo_id:
             return reload_with_error("Please select a Job Order from the list.")
@@ -351,22 +355,21 @@ def start_extrusion_session(request):
             error_msg = " ".join(e.messages) if hasattr(e, 'messages') else str(e)
             return reload_with_error(error_msg)
 
-        success_toast = get_toast_popup(f"Session locked in on Machine {machine_no}. Extrusion active.", "success", use_oob=False)
+        success_toast = render_toast(f"Session locked in on Machine {machine_no}. Extrusion active.", "success", use_oob=False)
+        response = HttpResponse(success_toast)
         
-        # THE FIX: Order HTMX to fetch the fresh 'Active Run' UI in the background and snap it into place
-        soft_refresh = f"<script>htmx.ajax('GET', '/load-machine-state/{machine_no}/', {{target: '#machine-workspace'}});</script>"
-        return HttpResponse(success_toast + soft_refresh)
+        return trigger_refresh(response, f"/load-machine-state/{machine_no}/", "#machine-workspace")
     
 def log_session_roll(request):
     """Operator logs a roll to their currently active session."""
     if not has_logging_permission(request.user):
-        return HttpResponse(get_toast_popup("Unauthorised: Only Operators and Admins can log rolls.", "error", use_oob=False))
+        return HttpResponse(render_toast("Unauthorised: Only Operators and Admins can log rolls.", "error", use_oob=False))
     
     if request.method == "POST":
         session_id = request.POST.get('session_id')
 
         def reload_with_error(msg):
-            return HttpResponse(get_toast_popup(msg, "error", use_oob=False))
+            return HttpResponse(render_toast(msg, "error", use_oob=False))
 
         if not session_id:
             return reload_with_error("No active session found.")
@@ -394,52 +397,21 @@ def log_session_roll(request):
             error_msg = " ".join(e.messages) if hasattr(e, 'messages') else str(e)
             return reload_with_error(error_msg)
         
-        # Pull the fresh totals 
         session.refresh_from_db() 
         
-        # NOTE: We removed the manual "session.status = 'COMPLETED'" check here
-        # because the ExtrusionLog model now automatically handles it!
-        
-        # --- THE SPLIT BEHAVIOUR FIX ---
         if session.status == 'COMPLETED':
-            # Determine WHY the session auto-completed to show the correct toast
             if session.total_output_kg >= session.target_amount_kg:
-                success_msg = get_toast_popup("Target Reached! Session Auto-Completed.", "success", use_oob=False)
+                success_msg = render_toast("Target Reached! Session Auto-Completed.", "success", use_oob=False)
             else:
-                success_msg = get_toast_popup("Material Depleted! Session Auto-Completed.", "warning", use_oob=False)
-            
-            # We don't need to clear inputs because the form is about to be replaced
-            soft_refresh = f"""
-            <script>
-                htmx.ajax('GET', '/load-machine-state/{session.machine_no}/', {{target: '#machine-workspace'}});
-            </script>
-            """
-            
-            response = HttpResponse(success_msg + soft_refresh)
-            
-            # CRITICAL: Hijack the form's target and redirect it to the body!
-            response['HX-Retarget'] = 'body'
-            response['HX-Reswap'] = 'beforeend'
-            return response
-            
+                success_msg = render_toast("Material Depleted! Session Auto-Completed.", "warning", use_oob=False)
         else:
-            # 2. The Job is Still Active
-            success_msg = get_toast_popup(f"Successfully logged {roll_weight}kg roll.", "success", use_oob=False)
+            success_msg = render_toast(f"Successfully logged {roll_weight}kg roll.", "success", use_oob=False)
             
-            # THE FIX: Tell HTMX to quietly reload the machine state.
-            # This instantly updates the progress bar, output totals, and clears the form!
-            soft_refresh = f"""
-            <script>
-                htmx.ajax('GET', '/load-machine-state/{session.machine_no}/', {{target: '#machine-workspace'}});
-            </script>
-            """
-            
-            response = HttpResponse(success_msg + soft_refresh)
-            
-            # Hijack the form's target and push the toast to the body
-            response['HX-Retarget'] = 'body'
-            response['HX-Reswap'] = 'beforeend'
-            return response
+        response = HttpResponse(success_msg)
+        response['HX-Retarget'] = 'body'
+        response['HX-Reswap'] = 'beforeend'
+        
+        return trigger_refresh(response, f"/load-machine-state/{session.machine_no}/", "#machine-workspace")
         
 @transaction.atomic
 def handover_extrusion_shift(request, session_id):
@@ -453,9 +425,9 @@ def handover_extrusion_shift(request, session_id):
         session.shift = new_shift
         session.save()
         
-        success_toast = get_toast_popup(f"Shift Handed Over to {new_operator}.", "success", use_oob=False)
-        refresh = f"<script>htmx.ajax('GET', '/load-machine-state/{session.machine_no}/', {{target: '#machine-workspace'}});</script>"
-        return HttpResponse(success_toast + refresh)
+        success_toast = render_toast(f"Shift Handed Over to {new_operator}.", "success", use_oob=False)
+        response = HttpResponse(success_toast)
+        return trigger_refresh(response, f"/load-machine-state/{session.machine_no}/", "#machine-workspace")
     
 @transaction.atomic
 def rollover_extrusion_session(request, session_id):
@@ -465,24 +437,19 @@ def rollover_extrusion_session(request, session_id):
         next_job_id = request.POST.get('next_job_order_id')
         next_job = get_object_or_404(JobOrder, id=next_job_id)
         
-        # 1. Calculate remaining physical material
         total_reserved = sum(sm.reserved_kg for sm in old_session.materials.all())
         total_consumed = old_session.total_output_kg + old_session.total_wastage_kg
         remaining_balance = max(Decimal('0.00'), total_reserved - total_consumed)
         
-        # 2. Spawn the new session
         new_session = ExtrusionSession.objects.create(
             machine_no=old_session.machine_no,
             job_order=next_job,
             operator_name=old_session.operator_name,
             shift=old_session.shift,
             status='ACTIVE',
-            # --- THE FIX: We must give the new session its target weight ---
             target_amount_kg=next_job.remaining_extrusion_kg 
         )
         
-        # 3. Transfer the physical material via a new SessionMaterial ledger
-        # Assuming the old session only had one primary raw material for simplicity
         primary_material_record = old_session.materials.first()
         if primary_material_record and remaining_balance > 0:
             SessionMaterial.objects.create(
@@ -491,14 +458,12 @@ def rollover_extrusion_session(request, session_id):
                 reserved_kg=remaining_balance
             )
             
-        # 4. Cleanly close the old session
         old_session.transferred_to_next_job_kg = remaining_balance
         old_session.stop_session()
         
-        success_toast = get_toast_popup("Material Rolled Over to New Job.", "success", use_oob=False)
-        refresh = f"<script>htmx.ajax('GET', '/load-machine-state/{new_session.machine_no}/', {{target: '#machine-workspace'}});</script>"
-        return HttpResponse(success_toast + refresh)
-
+        success_toast = render_toast("Material Rolled Over to New Job.", "success", use_oob=False)
+        response = HttpResponse(success_toast)
+        return trigger_refresh(response, f"/load-machine-state/{new_session.machine_no}/", "#machine-workspace")
 
 @transaction.atomic
 def purge_and_close_session(request, session_id):
@@ -513,26 +478,21 @@ def purge_and_close_session(request, session_id):
         total_reserved = sum(sm.reserved_kg for sm in session.materials.all())
         total_consumed = session.total_output_kg + session.total_wastage_kg
         
-        # The Mathematical Anchor
         accounted_for = total_consumed + returned_kg + final_waste
         variance = total_reserved - accounted_for
         
-        # Allow a tiny 1% buffer for scale miscalibration
         buffer = total_reserved * Decimal('0.01')
         
         if abs(variance) > buffer and not force_discrepancy:
-            # Trap the operator: The math does not balance.
             error = f"Discrepancy detected! You are missing {variance}kg of material. Please recount or flag a discrepancy."
-            return HttpResponse(get_toast_popup(error, "error", use_oob=False))
+            return HttpResponse(render_toast(error, "error", use_oob=False))
             
-        # If it balances, or if the operator forces the discrepancy
         session.returned_material_kg = returned_kg
         session.final_wastage_kg = final_waste
         
         if force_discrepancy:
             session.unaccounted_variance_kg = variance
             
-        # ONLY refund the explicitly weighed, clean return material back to inventory
         if returned_kg > 0:
             primary_material = session.materials.first()
             if primary_material:
@@ -545,50 +505,41 @@ def purge_and_close_session(request, session_id):
         msg = "Session Closed with Discrepancy Flag." if force_discrepancy else "Session Cleanly Closed."
         toast_type = "warning" if force_discrepancy else "success"
         
-        success_toast = get_toast_popup(msg, toast_type, use_oob=False)
-        refresh = f"<script>htmx.ajax('GET', '/load-machine-state/{session.machine_no}/', {{target: '#machine-workspace'}});</script>"
-        return HttpResponse(success_toast + refresh)
+        success_toast = render_toast(msg, toast_type, use_oob=False)
+        response = HttpResponse(success_toast)
+        return trigger_refresh(response, f"/load-machine-state/{session.machine_no}/", "#machine-workspace")
     
 @login_required(login_url='login')
 def complete_extrusion_session(request, session_id):
     """Operator successfully completes the extrusion job."""
     if request.method == 'POST':
-        # 1. Fetch the active session
         session = get_object_or_404(ExtrusionSession, id=session_id, status='ACTIVE')
         machine_no = session.machine_no
         
-        # 2. Mark as complete and save
         session.status = 'COMPLETED'
         session.save()
         
-        # 3. Build the UI response (Toast + the Soft Refresh Script)
-        success_toast = get_toast_popup(f"Extrusion on Machine {machine_no} completed successfully.", "success", use_oob=False)
-        soft_refresh = f"<script>htmx.ajax('GET', '/load-machine-state/{machine_no}/', {{target: '#machine-workspace'}});</script>"
-        
-        # 4. Return the payload to execute in the browser
-        return HttpResponse(success_toast + soft_refresh)
+        success_toast = render_toast(f"Extrusion on Machine {machine_no} completed successfully.", "success", use_oob=False)
+        response = HttpResponse(success_toast)
+        return trigger_refresh(response, f"/load-machine-state/{machine_no}/", "#machine-workspace")
 
 def stop_extrusion_session(request, session_id):
     """Operator manually terminates the job early."""
     if not has_logging_permission(request.user):
-        return HttpResponse(get_toast_popup("Unauthorised: Only Operators and Admins can terminate sessions.", "error", use_oob=False))
+        return HttpResponse(render_toast("Unauthorised: Only Operators and Admins can terminate sessions.", "error", use_oob=False))
     
     session = get_object_or_404(ExtrusionSession, id=session_id)
     
-    # 1. Capture the exact location data before closing the session
     machine_no = session.machine_no
     shift = session.shift
     
-    # 2. Terminate the session
     session.stop_session()
     
-    warning_toast = get_toast_popup(f"Session on Machine {machine_no} terminated early.", "warning", use_oob=False)
+    warning_toast = render_toast(f"Session on Machine {machine_no} terminated early.", "warning", use_oob=False)
     
-    # 3. THE MAGIC LOOP: Append the state to the AJAX GET request
     ajax_url = f"/load-machine-state/{machine_no}/?prefill_machine={machine_no}&prefill_shift={shift}"
-    soft_refresh = f"<script>htmx.ajax('GET', '{ajax_url}', {{target: '#machine-workspace'}});</script>"
-    
-    return HttpResponse(warning_toast + soft_refresh)
+    response = HttpResponse(warning_toast)
+    return trigger_refresh(response, ajax_url, "#machine-workspace")
 
 # -----------------------------------------------------------------------------
 # CUTTING SESSIONS & SUBMISSION
@@ -627,7 +578,7 @@ def load_cutting_state(request, machine_no=None):
 def start_cutting_session(request):
     """Locks the cutting machine and logs the input roll."""
     if not has_logging_permission(request.user):
-        return HttpResponse(get_toast_popup("Unauthorised: Only Operators can start sessions.", "error", use_oob=False))
+        return HttpResponse(render_toast("Unauthorised: Only Operators can start sessions.", "error", use_oob=False))
         
     if request.method == "POST":
         jo_id = request.POST.get('job_order')
@@ -635,7 +586,7 @@ def start_cutting_session(request):
         shift = request.POST.get('shift')
         
         def reload_with_error(msg):
-            return HttpResponse(get_toast_popup(msg, "error", use_oob=False))
+            return HttpResponse(render_toast(msg, "error", use_oob=False))
 
         if not jo_id:
             return reload_with_error("Please select a Job Order from the list.")
@@ -663,20 +614,20 @@ def start_cutting_session(request):
         except ValidationError as e:
             return reload_with_error(str(e))
 
-        success_toast = get_toast_popup(f"Session locked on Cut Machine {machine_no}.", "success", use_oob=False)
-        soft_refresh = f"<script>htmx.ajax('GET', '/load-cutting-state/{machine_no}/', {{target: '#cutting-workspace'}});</script>"
-        return HttpResponse(success_toast + soft_refresh)
+        success_toast = render_toast(f"Session locked on Cut Machine {machine_no}.", "success", use_oob=False)
+        response = HttpResponse(success_toast)
+        return trigger_refresh(response, f"/load-cutting-state/{machine_no}/", "#cutting-workspace")
 
 def log_cut_roll(request):
     """Logs the good output from the active cutting session."""
     if not has_logging_permission(request.user):
-        return HttpResponse(get_toast_popup("Unauthorised: Only Operators can log output.", "error", use_oob=False))
+        return HttpResponse(render_toast("Unauthorised: Only Operators can log output.", "error", use_oob=False))
         
     if request.method == "POST":
         session_id = request.POST.get('session_id')
 
         def reload_with_error(msg):
-            return HttpResponse(get_toast_popup(msg, "error", use_oob=False))
+            return HttpResponse(render_toast(msg, "error", use_oob=False))
 
         if not session_id:
             return reload_with_error("No active session found.")
@@ -700,17 +651,12 @@ def log_cut_roll(request):
         session.refresh_from_db() 
         
         if session.status == 'COMPLETED':
-            success_msg = get_toast_popup(f"Roll finished! Wastage automatically calculated as {session.total_wastage_kg}kg.", "success", use_oob=False)
+            success_msg = render_toast(f"Roll finished! Wastage automatically calculated as {session.total_wastage_kg}kg.", "success", use_oob=False)
         else:
-            success_msg = get_toast_popup(f"Successfully logged {output_kg}kg of cut goods.", "success", use_oob=False)
+            success_msg = render_toast(f"Successfully logged {output_kg}kg of cut goods.", "success", use_oob=False)
             
-        soft_refresh = f"""
-        <script>
-            var out = document.querySelector('input[name="output_kg"]'); if(out) out.value='';
-            htmx.ajax('GET', '/load-cutting-state/{session.machine_no}/', {{target: '#cutting-workspace'}});
-        </script>
-        """
-        return HttpResponse(success_msg + soft_refresh)
+        response = HttpResponse(success_msg)
+        return trigger_refresh(response, f"/load-cutting-state/{session.machine_no}/", "#cutting-workspace")
     
 @login_required(login_url='login')
 def complete_cutting_roll(request, session_id):
@@ -718,45 +664,37 @@ def complete_cutting_roll(request, session_id):
         session = get_object_or_404(CuttingSession, id=session_id, status='ACTIVE')
         machine_no = session.machine_no
         
-        # USE THE MODEL METHOD: This calculates wastage and updates the JobOrder automatically
         session.stop_session(calculate_wastage=True) 
-        
-        # Refresh to get the calculated wastage for the toast message
         session.refresh_from_db()
         
-        success_toast = get_toast_popup(
-            f"Roll completed! {session.total_wastage_kg}kg wastage logged.", 
-            "success", 
-            use_oob=False
-        )
-        soft_refresh = f"<script>htmx.ajax('GET', '/load-cutting-state/{machine_no}/', {{target: '#cutting-workspace'}});</script>"
-        
-        return HttpResponse(success_toast + soft_refresh)
+        success_toast = render_toast(f"Roll completed! {session.total_wastage_kg}kg wastage logged.", "success", use_oob=False)
+        response = HttpResponse(success_toast)
+        return trigger_refresh(response, f"/load-cutting-state/{machine_no}/", "#cutting-workspace")
 
 def stop_cutting_session(request, session_id):
     """Operator terminates the cutting session early."""
     if not has_logging_permission(request.user):
-        return HttpResponse(get_toast_popup("Unauthorised action.", "error", use_oob=False))
+        return HttpResponse(render_toast("Unauthorised action.", "error", use_oob=False))
         
     session = get_object_or_404(CuttingSession, id=session_id)
     session.stop_session(calculate_wastage=False)
     
-    warning_toast = get_toast_popup(f"Cutting Session on Machine {session.machine_no} ended early. Wastage deferred.", "warning", use_oob=False)
-    soft_refresh = f"<script>htmx.ajax('GET', '/load-cutting-state/{session.machine_no}/', {{target: '#cutting-workspace'}});</script>"
-    return HttpResponse(warning_toast + soft_refresh)
+    warning_toast = render_toast(f"Cutting Session on Machine {session.machine_no} ended early. Wastage deferred.", "warning", use_oob=False)
+    response = HttpResponse(warning_toast)
+    return trigger_refresh(response, f"/load-cutting-state/{session.machine_no}/", "#cutting-workspace")
 
 # -----------------------------------------------------------------------------
 # PACKING SUBMISSION
 # -----------------------------------------------------------------------------
 def submit_packing(request):
     if not has_logging_permission(request.user):
-        return HttpResponse(get_toast_popup("Unauthorised: Only Operators and Admins can log packed goods.", "error", use_oob=False))
+        return HttpResponse(render_toast("Unauthorised: Only Operators and Admins can log packed goods.", "error", use_oob=False))
     
     if request.method == "POST":
         jo_id = request.POST.get('job_order')
         
         def reload_with_error(error_text):
-            return HttpResponse(get_toast_popup(error_text, "error", use_oob=False))
+            return HttpResponse(render_toast(error_text, "error", use_oob=False))
 
         if not jo_id:
             return reload_with_error("Please select a job from the list first.")
@@ -803,53 +741,11 @@ def submit_packing(request):
         else:
             success_msg = f"Successfully packed {total_weight_submitting}kg for {job_order.jo_number}."
             
-        success_toast = get_toast_popup(success_msg, "success", use_oob=False)
+        success_toast = render_toast(success_msg, "success", use_oob=False)
+        is_target_reached = bool(job_order.is_completed)
         
-        # Determine if the entire job order is fulfilled
-        is_target_reached = str(job_order.is_completed).lower()
-        
-        # 2. The Smart Soft Refresh Script
-        soft_refresh_script = f"""
-        <script>
-            var ps = document.querySelector('input[name="packing_size"]'); if(ps) ps.value='';
-            var qty = document.querySelector('input[name="quantity"]'); if(qty) qty.value='';
-            
-            var searchInput = document.querySelector('input[name="q"]');
-            if (searchInput) {{ 
-                var url = searchInput.getAttribute('hx-get');
-                var targetId = searchInput.getAttribute('hx-target').replace('#', '');
-                var query = searchInput.value || '';
-                
-                var swapListener = function(e) {{
-                    if (e.detail.target.id === targetId) {{
-                        var radio = document.getElementById('jo_{job_order.id}');
-                        var targetReached = {is_target_reached};
-                        
-                        if (radio && !targetReached) {{
-                            radio.checked = true;
-                            fetch(`/get-job-specs/{job_order.id}/?dept=packing`)
-                                .then(response => response.text())
-                                .then(html => {{
-                                    var specContainer = document.getElementById('job-specs-container');
-                                    if (specContainer) specContainer.innerHTML = html;
-                                }});
-                        }} else {{
-                            var specContainer = document.getElementById('job-specs-container');
-                            if (specContainer) {{
-                                specContainer.innerHTML = '<div style="padding: 40px 20px; text-align: center; color: var(--text-muted); border: 2px dashed var(--border-soft); border-radius: var(--radius); margin-bottom: 20px;"><div style="font-size: 2.5rem; margin-bottom: 15px; opacity: 0.5;">✅</div><p style="font-weight: bold; text-transform: uppercase; margin: 0; font-size: 1.1rem;">Order Fulfilled</p><p style="font-size: 0.9rem; color: var(--border-hard); margin-top: 8px;">Select a new job to continue.</p></div>';
-                            }}
-                            var progressBar = document.getElementById('active-progress-bar');
-                            if (progressBar) progressBar.innerHTML = '';
-                        }}
-                        document.body.removeEventListener('htmx:afterSwap', swapListener);
-                    }}
-                }};
-                document.body.addEventListener('htmx:afterSwap', swapListener);
-                htmx.ajax('GET', url + '&q=' + encodeURIComponent(query), {{target: '#' + targetId}}); 
-            }}
-        </script>
-        """
-        return HttpResponse(success_toast + soft_refresh_script)
+        response = HttpResponse(success_toast)
+        return trigger_packing_refresh(response, job_order.id, is_target_reached)
     
 # -----------------------------------------------------------------------------
 # HTMX FORM FETCHING & SEARCHING
@@ -925,7 +821,6 @@ def control_tower(request):
     if hasattr(request.user, 'profile') and request.user.profile.role == 'OPERATOR':
         return redirect('dashboard')
     
-    # Core States Handling
     timeframes = request.GET.getlist('timeframe')
     timeframe = timeframes[0] if timeframes else 'daily'
     
@@ -937,7 +832,6 @@ def control_tower(request):
     
     now = timezone.now()
     
-    # Timeframe Resolutions
     if timeframe == 'weekly':
         start_date = now.date() - timedelta(days=now.weekday()) 
         label_prefix = "This Week's"
@@ -951,29 +845,41 @@ def control_tower(request):
         start_date = now.date()
         label_prefix = "Today's"
 
-    if timeframe == 'daily':
-        date_filter = {'timestamp__date': start_date}
-    else:
-        date_filter = {'timestamp__date__gte': start_date}
+    date_filter = {'timestamp__date': start_date} if timeframe == 'daily' else {'timestamp__date__gte': start_date}
+    session_date_filter = {'end_time__date': start_date} if timeframe == 'daily' else {'end_time__date__gte': start_date}
 
-    # Aggregate KPI Totals
+    # 1. Aggregate KPI Totals (Protected with Coalesce to eliminate 'None' bugs)
     total_extruded = ExtrusionLog.objects.filter(**date_filter).aggregate(
-        total=Sum('roll_weight_kg'))['total'] or Decimal('0')
+        total=Coalesce(Sum('roll_weight_kg'), Decimal('0.00'), output_field=DecimalField())
+    )['total']
         
     total_cut = CuttingLog.objects.filter(**date_filter).aggregate(
-        total=Sum('output_kg'))['total'] or Decimal('0')
+        total=Coalesce(Sum('output_kg'), Decimal('0.00'), output_field=DecimalField())
+    )['total']
         
     total_packed = PackingLog.objects.filter(**date_filter).annotate(
         weight=F('packing_size_kg') * F('quantity_packed')
-    ).aggregate(total=Sum('weight'))['total'] or Decimal('0')
+    ).aggregate(
+        total=Coalesce(Sum('weight'), Decimal('0.00'), output_field=DecimalField())
+    )['total']
 
-    # Macro Breakdowns
+    # 2. Global Wastage Summaries for the Timeframe
+    total_ext_waste = ExtrusionSession.objects.filter(**session_date_filter, status='COMPLETED').aggregate(
+        total=Coalesce(Sum(F('total_wastage_kg') + F('final_wastage_kg')), Decimal('0.00'), output_field=DecimalField())
+    )['total']
+    
+    total_cut_waste = CuttingSession.objects.filter(**session_date_filter, status='COMPLETED').aggregate(
+        total=Coalesce(Sum('total_wastage_kg'), Decimal('0.00'), output_field=DecimalField())
+    )['total']
+
+    global_wastage = total_ext_waste + total_cut_waste
+
+    # 3. Macro Breakdowns (Restored)
     extrusion_breakdown = ExtrusionLog.objects.filter(**date_filter).values(
         jo_num=F('session__job_order__jo_number'),
         customer=F('session__job_order__customer')
     ).annotate(total=Sum('roll_weight_kg')).order_by('-total')
 
-    # We now route through the 'session' relationship to find the job order details
     cutting_breakdown = CuttingLog.objects.filter(**date_filter).values(
         jo_num=F('session__job_order__jo_number'),
         customer=F('session__job_order__customer')
@@ -984,29 +890,28 @@ def control_tower(request):
         customer=F('job_order__customer')
     ).annotate(total=Sum(F('packing_size_kg') * F('quantity_packed'))).order_by('-total')
 
-    # Fetch recent sessions where material went missing (variance > 0)
+    # 4. Live Operational Context (Restored)
     discrepancy_alerts = ExtrusionSession.objects.filter(
         unaccounted_variance_kg__gt=0
     ).select_related('job_order').order_by('-end_time')[:5]
 
-    # Live Operational Context
     active_machines = ExtrusionSession.objects.filter(status='ACTIVE').select_related('job_order')
-    active_cutting_machines = CuttingSession.objects.filter(status='ACTIVE').select_related('job_order') # Added this line
+    active_cutting_machines = CuttingSession.objects.filter(status='ACTIVE').select_related('job_order')
     low_stock_materials = RawMaterial.objects.filter(current_stock_kg__lte=F('reorder_point_kg'))
     purchasing_shortfalls = MaterialAllocation.objects.filter(shortfall_kg__gt=0, job_order__is_completed=False)
 
-    # Factory Pipeline Tiers
+    # 5. Optimised Pipeline Tiers (Using select_related to prevent N+1 Queries)
     active_jobs = JobOrder.objects.filter(
         Q(extrusion_sessions__status='ACTIVE') | Q(total_extruded_kg__gt=0),
         is_completed=False
-    ).distinct().order_by('-id')[:10]
+    ).select_related('recipe').distinct().order_by('-id')[:10]
 
     queued_jobs = JobOrder.objects.filter(
         is_completed=False, 
         total_extruded_kg=0
-    ).exclude(extrusion_sessions__status='ACTIVE').order_by('queue_position', 'target_delivery_date', 'id')[:10]
+    ).exclude(extrusion_sessions__status='ACTIVE').select_related('recipe').order_by('queue_position', 'target_delivery_date', 'id')[:10]
     
-    completed_jobs = JobOrder.objects.filter(is_completed=True).order_by('-id')[:10]
+    completed_jobs = JobOrder.objects.filter(is_completed=True).select_related('recipe').order_by('-id')[:10]
 
     context = {
         'timeframe': timeframe,
@@ -1017,6 +922,9 @@ def control_tower(request):
         'total_extruded': total_extruded,
         'total_cut': total_cut,
         'total_packed': total_packed,
+        'total_ext_waste': total_ext_waste,       # NEW
+        'total_cut_waste': total_cut_waste,       # NEW
+        'global_wastage': global_wastage,         # NEW
         'extrusion_breakdown': extrusion_breakdown,
         'cutting_breakdown': cutting_breakdown,
         'packing_breakdown': packing_breakdown,
@@ -1038,7 +946,9 @@ def get_job_specs(request, jo_id):
     job_order = get_object_or_404(JobOrder, id=jo_id)
 
     if job_order.is_completed: 
-        return HttpResponse(get_toast_popup("This Job Order is already closed or completed. You cannot view active specs for it.", "error"))
+        # Refactored to use the new Django template-based toast
+        error_toast = render_toast("This Job Order is already closed or completed. You cannot view active specs for it.", "error")
+        return HttpResponse(error_toast)
         
     dept = request.GET.get('dept')
     
@@ -1053,7 +963,6 @@ def get_job_specs(request, jo_id):
             dept = 'packing'
             
     return render(request, 'production/partials/job_spec_card.html', {'jo': job_order, 'dept': dept})
-
 def custom_logout(request):
     """Safely ends the user session and returns to the gateway."""
     django_logout(request)

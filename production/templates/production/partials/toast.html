@@ -1,0 +1,31 @@
+{% if use_oob %}
+<div hx-swap-oob="beforeend:body" class="toast-popup" style="background-color: {{ theme.bg }}; color: {{ theme.text }};">
+    {{ theme.icon }} {{ message }}
+</div>
+{% else %}
+<div class="toast-popup" style="background-color: {{ theme.bg }}; color: {{ theme.text }};">
+    {{ theme.icon }} {{ message }}
+</div>
+{% endif %}
+
+<style>
+    .toast-popup {
+        position: fixed; 
+        top: 20px; 
+        right: 20px; 
+        z-index: 9999; 
+        padding: 15px 25px; 
+        border-radius: 4px; 
+        font-size: 15px; 
+        font-weight: bold; 
+        box-shadow: 0 4px 10px rgba(0,0,0,0.3); 
+        animation: toastFadeOut 4s forwards; 
+        pointer-events: none;
+    }
+    @keyframes toastFadeOut {
+        0% { opacity: 0; transform: translateY(-10px); }
+        10% { opacity: 1; transform: translateY(0); }
+        80% { opacity: 1; transform: translateY(0); }
+        100% { opacity: 0; transform: translateY(-10px); pointer-events: none; }
+    }
+</style>

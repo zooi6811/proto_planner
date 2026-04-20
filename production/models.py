@@ -37,8 +37,8 @@ class RawMaterial(models.Model):
     category = models.ForeignKey(MaterialCategory, on_delete=models.SET_NULL, null=True, blank=True, related_name='materials')
     material_id = models.CharField(max_length=50, unique=True)
     name = models.CharField(max_length=100)
-    current_stock_kg = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    reorder_point_kg = models.DecimalField(max_digits=10, decimal_places=2, default=100)
+    current_stock_kg = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    reorder_point_kg = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('100.00'))
 
     def __str__(self):
         return f"{self.material_id} - {self.name}"
@@ -119,15 +119,16 @@ class JobOrder(models.Model):
     # Targets & Progress
     wastage_buffer_percent = models.DecimalField(max_digits=5, decimal_places=2, default=10.00)
     order_quantity_kg = models.DecimalField(max_digits=10, decimal_places=2)
-    total_est_material_kg = models.DecimalField(max_digits=10, decimal_places=2, editable=False, default=0)
     total_extrusion_wastage_kg = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
-    total_cutting_wastage_kg = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    total_extruded_kg = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    total_cut_kg = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    total_packed_kg = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     
+    total_est_material_kg = models.DecimalField(max_digits=10, decimal_places=2, editable=False, default=Decimal('0.00'))
+    total_cutting_wastage_kg = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    total_extruded_kg = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    total_cut_kg = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    total_packed_kg = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    total_shipped_kg = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+
     # Fulfilment & Shipping
-    total_shipped_kg = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     is_completed = models.BooleanField(default=False, help_text="Mark as true when the entire order is finished.")
 
     class Meta:
@@ -222,6 +223,32 @@ class JobOrder(models.Model):
         usable_extruded = self.total_extruded_kg - self.total_cutting_wastage_kg
         remaining = self.order_quantity_kg - usable_extruded
         return max(Decimal('0'), remaining)
+    
+    @property
+    def extrusion_wastage_pct(self):
+        """Calculates blowing/extrusion wastage percentage."""
+        total_material_processed = self.total_extruded_kg + self.total_extrusion_wastage_kg
+        if total_material_processed > Decimal('0.00'):
+            return round((self.total_extrusion_wastage_kg / total_material_processed) * Decimal('100'), 2)
+        return Decimal('0.00')
+
+    @property
+    def cutting_wastage_pct(self):
+        """Calculates cutting/slitting wastage percentage."""
+        total_material_processed = self.total_cut_kg + self.total_cutting_wastage_kg
+        if total_material_processed > Decimal('0.00'):
+            return round((self.total_cutting_wastage_kg / total_material_processed) * Decimal('100'), 2)
+        return Decimal('0.00')
+
+    @property
+    def overall_wastage_pct(self):
+        """Calculates the total factory floor wastage percentage against the hopper input."""
+        total_waste = self.total_extrusion_wastage_kg + self.total_cutting_wastage_kg
+        total_input = self.total_extruded_kg + self.total_extrusion_wastage_kg 
+        
+        if total_input > Decimal('0.00'):
+            return round((total_waste / total_input) * Decimal('100'), 2)
+        return Decimal('0.00')
 
     def __str__(self):
         return f"JO: {self.jo_number} - {self.customer}"
@@ -236,9 +263,8 @@ class MaterialAllocation(models.Model):
     
     required_kg = models.DecimalField(max_digits=10, decimal_places=2)
     allocated_kg = models.DecimalField(max_digits=10, decimal_places=2, help_text="Physical stock reserved for this job")
-    shortfall_kg = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text="Hypothetical stock (Needs Purchasing)")
-    actual_used_kg = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-
+    shortfall_kg = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'), help_text="Hypothetical stock (Needs Purchasing)")
+    actual_used_kg = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
     @property
     def is_overused(self):
         return self.actual_used_kg > (self.required_kg * Decimal('1.02'))
@@ -305,8 +331,8 @@ class ExtrusionSession(models.Model):
     start_time = models.DateTimeField(auto_now_add=True)
     end_time = models.DateTimeField(null=True, blank=True)
     
-    total_output_kg = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    total_wastage_kg = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    total_output_kg = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    total_wastage_kg = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
 
     # --- NEW ACCOUNTABILITY METRICS ---
     returned_material_kg = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
@@ -336,14 +362,14 @@ class SessionMaterial(models.Model):
     session = models.ForeignKey(ExtrusionSession, on_delete=models.CASCADE, related_name='materials')
     material = models.ForeignKey(RawMaterial, on_delete=models.CASCADE)
     reserved_kg = models.DecimalField(max_digits=10, decimal_places=2)
-    actual_used_kg = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    actual_used_kg = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
 
 class ExtrusionLog(models.Model):
     session = models.ForeignKey(ExtrusionSession, on_delete=models.CASCADE, related_name='rolls')
     timestamp = models.DateTimeField(auto_now_add=True)
     
     roll_weight_kg = models.DecimalField(max_digits=8, decimal_places=2, validators=[MinValueValidator(Decimal('0.01'))])
-    wastage_kg = models.DecimalField(max_digits=8, decimal_places=2, default=0, validators=[MinValueValidator(Decimal('0'))])
+    wastage_kg = models.DecimalField(max_digits=8, decimal_places=2, default=Decimal('0.00'), validators=[MinValueValidator(Decimal('0.00'))])
 
     def clean(self):
         if self.wastage_kg < Decimal('0') or self.wastage_kg > self.roll_weight_kg:
@@ -410,8 +436,8 @@ class CuttingSession(models.Model):
     start_time = models.DateTimeField(auto_now_add=True)
     end_time = models.DateTimeField(null=True, blank=True)
     
-    total_output_kg = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    total_wastage_kg = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    total_output_kg = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    total_wastage_kg = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
 
     def stop_session(self, calculate_wastage=True):
         """Terminates the session and handles wastage calculation."""
