@@ -3,7 +3,7 @@ from django.dispatch import receiver
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from django.db import transaction
-from .models import JobOrder
+from .models import JobOrder, ExtrusionLog, CuttingLog, ExtrusionSession, CuttingSession
 
 def trigger_live_update():
     """
@@ -24,5 +24,9 @@ def trigger_live_update():
 
 # Example Integration: We only track the JobOrder model for this first step.
 @receiver(post_save, sender=JobOrder)
+@receiver(post_save, sender=ExtrusionSession)
+@receiver(post_save, sender=CuttingSession)
+@receiver(post_save, sender=ExtrusionLog)
+@receiver(post_save, sender=CuttingLog)
 def broadcast_job_change(sender, instance, **kwargs):
     trigger_live_update()

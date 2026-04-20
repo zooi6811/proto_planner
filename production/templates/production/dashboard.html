@@ -141,6 +141,39 @@
                 });
             }
         });
+        document.body.addEventListener('htmx:wsAfterMessage', function(e) {
+        // 1. Refresh the Priority Queue (Job List)
+        const searchInput = document.querySelector('input[name="q"]');
+        if (searchInput) {
+            const url = searchInput.getAttribute('hx-get');
+            const targetId = searchInput.getAttribute('hx-target');
+            const query = searchInput.value || '';
+            htmx.ajax('GET', url + '&q=' + encodeURIComponent(query), {target: targetId});
+        }
+
+        // 2. Refresh the Active Machine State (if any machine is selected)
+        // This handles the "Operator Screen" updates when logs are added elsewhere
+        const machineSelect = document.querySelector('select[name="machine_no"]');
+        if (machineSelect && machineSelect.value) {
+            const activeMachine = machineSelect.value;
+            const currentTab = document.querySelector('.tab-btn.active').innerText.toLowerCase();
+            
+            let refreshUrl = "";
+            let refreshTarget = "";
+
+            if (currentTab.includes("extrusion")) {
+                refreshUrl = `/load-machine-state/${activeMachine}/`;
+                refreshTarget = "#machine-workspace";
+            } else if (currentTab.includes("cutting")) {
+                refreshUrl = `/load-cutting-state/${activeMachine}/`;
+                refreshTarget = "#cutting-workspace";
+            }
+
+            if (refreshUrl) {
+                htmx.ajax('GET', refreshUrl, {target: refreshTarget});
+            }
+        }
+    });
     </script>
 </body>
 </html>
