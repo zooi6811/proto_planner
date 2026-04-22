@@ -80,5 +80,31 @@
             // In a production environment, you would implement exponential backoff reconnection here.
         };
     </script>
+    <script>
+    // Listen for WebSocket messages coming through HTMX
+    document.body.addEventListener("htmx:wsAfterMessage", function(event) {
+        try {
+            // Parse the incoming WebSocket data
+            const data = JSON.parse(event.detail.message);
+            
+            // If it's our new supervisor alert...
+            if (data.type === "supervisor_alert") {
+                
+                // Fire a loud browser alert (or hook this into a SweetAlert/Modal if you prefer)
+                alert(
+                    "ACTION REQUIRED\n\n" +
+                    "Job Order: " + data.jo_number + "\n" + 
+                    "Status: " + data.variance_type + "\n\n" +
+                    data.message
+                );
+                
+                // Optional: Auto-refresh the page so the supervisor immediately sees the pending job
+                window.location.reload();
+            }
+        } catch (e) {
+            // Ignore non-JSON messages (like HTML fragments being swapped by HTMX)
+        }
+    });
+</script>
 </body>
 </html>

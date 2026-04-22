@@ -45,4 +45,5 @@ urlpatterns = [
     path('search-jobs/', views.search_jobs, name='search_jobs'),
     path('add-material-row/', views.add_material_row, name='add_material_row'),
     path('get-materials-by-category/', views.get_materials_by_category, name='get_materials_by_category'),
+    path('force-close-job/<int:jo_id>/', views.force_close_job, name='force_close_job'),
 ]

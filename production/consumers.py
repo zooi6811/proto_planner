@@ -27,3 +27,11 @@ class LiveFactoryConsumer(AsyncWebsocketConsumer):
         await self.send(text_data=json.dumps({
             'type': message_type
         }))
+
+    # Handles the background yield tracker updates
+    async def yield_update_message(self, event):
+        await self.send(text_data=event["payload"])
+
+    # Handles the URGENT supervisor pop-ups
+    async def supervisor_alert_message(self, event):
+        await self.send(text_data=event["payload"])

@@ -87,11 +87,42 @@ class MaterialRestockLog(models.Model):
     def save(self, *args, **kwargs):
         is_new = self.pk is None
         super().save(*args, **kwargs)
+        
         if is_new:
             with transaction.atomic():
                 mat = RawMaterial.objects.select_for_update().get(pk=self.material.pk)
-                mat.current_stock_kg += self.amount_kg
-                mat.save()
+                incoming_stock = self.amount_kg
+                
+                # --- FIX #5: RETROACTIVE SHORTFALL FULFILMENT ---
+                # Fetch all active allocations waiting for this material, strictly ordered by priority
+                shortfall_allocations = MaterialAllocation.objects.filter(
+                    material=mat,
+                    shortfall_kg__gt=0,
+                    job_order__is_completed=False
+                ).select_related('job_order').order_by(
+                    'job_order__queue_position', 
+                    'job_order__target_delivery_date',
+                    'job_order__id'
+                ).select_for_update()
+                
+                for allocation in shortfall_allocations:
+                    if incoming_stock <= Decimal('0'):
+                        break # The delivery truck is empty; stop fulfilling
+                        
+                    # Calculate how much of this specific shortfall we can clear
+                    fulfillable_amount = min(incoming_stock, allocation.shortfall_kg)
+                    
+                    # Move the stock directly from the delivery into the Job's Escrow
+                    allocation.allocated_kg += fulfillable_amount
+                    allocation.shortfall_kg -= fulfillable_amount
+                    allocation.save(update_fields=['allocated_kg', 'shortfall_kg'])
+                    
+                    # Deduct from our running total of incoming stock
+                    incoming_stock -= fulfillable_amount
+                    
+                # Add whatever is left over (if any) to the global warehouse shelves
+                mat.current_stock_kg += incoming_stock
+                mat.save(update_fields=['current_stock_kg'])
 
     def __str__(self):
         return f"+{self.amount_kg} KG of {self.material.name} on {self.arrival_date.strftime('%Y-%m-%d')}"
@@ -326,24 +357,89 @@ class JobOrder(models.Model):
                 
             super().save(*args, **kwargs)
 
-    def complete_job(self):
-        if self.is_completed:
-            return 
-            
+    def complete_job(self, operator_name="System", force_close=False):
+        """
+        Safely closes the job, handles material reconciliation, accommodates 
+        manufacturing variances, and enforces Mass Balance data integrity.
+        """
         with transaction.atomic():
-            for allocation in self.allocations.all():
+            job = JobOrder.objects.select_for_update().get(pk=self.pk)
+            
+            if job.is_completed:
+                return False, "Job is already marked as completed."
+
+            # --- 1. THE MASS BALANCE CHECK (Catches Typos & Missing Data) ---
+            # Are we missing more than 2% of the physical material?
+            if job.mass_discrepancy_percent > Decimal('2.00') and not force_close:
+                return False, (
+                    f"DATA ERROR: Mass balance failed. Missing/Extra {abs(job.mass_discrepancy_kg)}kg "
+                    f"({job.mass_discrepancy_percent:.1f}% discrepancy). Please check for typos in roll weights "
+                    f"or unlogged machine wastage before closing."
+                )
+
+            # --- 2. THE PRODUCTION TOLERANCE CHECK (Catches Over-runs) ---
+            # Did we overproduce or underproduce by more than 10%?
+            variance_kg = job.total_packed_kg - job.order_quantity_kg
+            variance_pct = (abs(variance_kg) / job.order_quantity_kg) * Decimal('100') if job.order_quantity_kg else Decimal('0')
+            
+            if variance_pct > Decimal('10.00') and not force_close:
+                state = "OVERPRODUCED" if variance_kg > 0 else "UNDERPRODUCED"
+                alert_msg = (
+                    f"VARIANCE ALERT: Job {state} by {abs(variance_kg)}kg ({variance_pct:.1f}%). "
+                    f"Supervisor override (force_close) is required to approve this extreme variance."
+                )
+            
+                from .signals import trigger_supervisor_alert # Lazy import
+                trigger_supervisor_alert(job.jo_number, state, alert_msg)
+                
+                return False, alert_msg
+
+            # If not forcing a premature closure, wait for shipments to meet the packed target
+            # (Note: We check against packed_kg now to ensure we ship what we actually packed)
+            if not force_close and job.total_shipped_kg < job.total_packed_kg:
+                return False, "Job has not shipped all packed goods yet."
+
+            # Accommodate legitimate overproduction upscaling
+            if job.total_packed_kg > job.order_quantity_kg:
+                job.order_quantity_kg = job.total_packed_kg
+
+            # RECONCILIATION: Return unused allocated materials to warehouse stock
+            for allocation in job.allocations.select_for_update().all():
                 unused_kg = allocation.allocated_kg - allocation.actual_used_kg
-                if unused_kg > Decimal('0'):
+                if unused_kg > Decimal('0.00'):
                     material = RawMaterial.objects.select_for_update().get(pk=allocation.material.pk)
                     material.current_stock_kg += unused_kg
-                    material.save()
+                    material.save(update_fields=['current_stock_kg'])
                     
                     allocation.allocated_kg = allocation.actual_used_kg
-                    allocation.save()
+                    allocation.save(update_fields=['allocated_kg'])
+            
+            # Finalise lockdown state
+            job.is_completed = True
+            job.save(update_fields=['is_completed', 'order_quantity_kg'])
             
             self.is_completed = True
-            self.save(update_fields=['is_completed'])
-
+            self.order_quantity_kg = job.order_quantity_kg
+            
+            # Audit Trail including Data Integrity metrics
+            from .models import AuditLog 
+            AuditLog.objects.create(
+                operator_name=operator_name,
+                action_type='JOB_COMPLETED',
+                content_object=job,
+                details={
+                    'final_order_quantity_kg': str(job.order_quantity_kg),
+                    'total_extruded_kg': str(job.total_extruded_kg),
+                    'total_cut_kg': str(job.total_cut_kg),
+                    'total_packed_kg': str(job.total_packed_kg),
+                    'mass_discrepancy_percent': str(round(job.mass_discrepancy_percent, 2)),
+                    'forced_closure': force_close,
+                    'reconciliation_performed': True
+                }
+            )
+            
+            return True, "Job successfully completed and materials reconciled."
+        
     @property
     def extrusion_progress(self):
         if self.order_quantity_kg > Decimal('0'):
@@ -398,6 +494,27 @@ class JobOrder(models.Model):
         if total_input > Decimal('0.00'):
             return round((total_waste / total_input) * Decimal('100'), 2)
         return Decimal('0.00')
+    
+    @property
+    def total_material_consumed_kg(self):
+        # Total actual raw material pulled from the warehouse for this job
+        return sum(alloc.actual_used_kg for alloc in self.allocations.all())
+
+    @property
+    def total_accounted_mass_kg(self):
+        # Finished goods + all recorded scrap
+        return self.total_packed_kg + self.total_extrusion_wastage_kg + self.total_cutting_wastage_kg
+
+    @property
+    def mass_discrepancy_kg(self):
+        # The amount of physical material floating in the void
+        return self.total_material_consumed_kg - self.total_accounted_mass_kg
+
+    @property
+    def mass_discrepancy_percent(self):
+        if self.total_material_consumed_kg > Decimal('0'):
+            return abs(self.mass_discrepancy_kg / self.total_material_consumed_kg) * Decimal('100')
+        return Decimal('0.00')
 
     def __str__(self):
         return f"JO: {self.jo_number} - {self.customer}"
@@ -430,15 +547,28 @@ class MaterialUsageLog(models.Model):
 
     @classmethod
     def record_usage(cls, job_order, material, amount_kg, operator_name):
+        """
+        Service method to handle ad-hoc material usage safely.
+        Validates stock, prevents session clashes, and handles allocation logic within a strict atomic lock.
+        """
         with transaction.atomic():
             jo = JobOrder.objects.select_for_update().get(pk=job_order.pk)
+            
+            if jo.is_completed:
+                raise ValidationError("This Job Order is already closed or completed. You cannot log new data against it.")
+                
+            # --- FIX #4: PREVENT DOUBLE-COUNTING CLASHES ---
+            # If the machine is running, force them to use the Session hopper instead of the ad-hoc form
+            if jo.extrusion_sessions.filter(status='ACTIVE').exists():
+                raise ValidationError(
+                    "Cannot log manual ad-hoc usage while an Extrusion machine is actively running this job. "
+                    "Please load materials directly into the machine session's hopper instead to prevent double-counting."
+                )
+
             live_material = RawMaterial.objects.select_for_update().get(pk=material.pk)
 
             if amount_kg > live_material.current_stock_kg:
                 raise ValidationError(f"Insufficient stock. You requested {amount_kg}kg, but only {live_material.current_stock_kg}kg of {live_material.name} is available.")
-
-            if jo.is_completed:
-                raise ValidationError("This Job Order is already closed or completed. You cannot log new data against it.")
 
             allocation, created = MaterialAllocation.objects.get_or_create(
                 job_order=jo,
@@ -459,9 +589,9 @@ class MaterialUsageLog(models.Model):
                     if overage > Decimal('0'):
                         live_material.current_stock_kg -= overage
 
-            live_material.save()
+            live_material.save(update_fields=['current_stock_kg'])
             allocation.actual_used_kg += amount_kg
-            allocation.save()
+            allocation.save(update_fields=['actual_used_kg'])
 
             log = cls.objects.create(
                 job_order=jo,
@@ -499,7 +629,7 @@ class ExtrusionSession(models.Model):
     @classmethod
     @transaction.atomic
     def start_session(cls, job_order, machine_no, shift, target_amount, operator, material_reservations):
-        """Service method to initiate a new extrusion session with reserved materials."""
+        """Service method to initiate a new extrusion session using Escrowed materials and strict Recipe Adherence."""
         if cls.objects.select_for_update().filter(machine_no=machine_no, status='ACTIVE').exists():
             raise ValidationError(f"Conflict: Machine {machine_no} is already running an active session.")
 
@@ -510,14 +640,65 @@ class ExtrusionSession(models.Model):
         
         total_reserved = sum(amt for mat_id, amt in material_reservations if amt > Decimal('0'))
         
+        # --- NEW: RECIPE ADHERENCE CHECK (BOM Validation) ---
+        if job_order.recipe and total_reserved > Decimal('0'):
+            # Create a dictionary of the allowed materials and their target ratios
+            recipe_items = {item.material_id: item.ratio for item in job_order.recipe.ingredients.all()}
+            
+            for mat_id, parsed_amount in material_reservations:
+                if parsed_amount > Decimal('0'):
+                    mat_pk = int(mat_id)
+                    
+                    # 1. Unauthorised Material Check
+                    if mat_pk not in recipe_items:
+                        bad_mat = RawMaterial.objects.get(id=mat_pk)
+                        raise ValidationError(f"Recipe Deviation: '{bad_mat.name}' is not authorised for formula {job_order.recipe.formula_code}.")
+                    
+                    # 2. Ratio Tolerance Check
+                    actual_ratio = parsed_amount / total_reserved
+                    expected_ratio = recipe_items[mat_pk]
+                    
+                    # Enforce a strict 3% tolerance for manual weighing variances
+                    if abs(actual_ratio - expected_ratio) > Decimal('0.03'):
+                        bad_mat = RawMaterial.objects.get(id=mat_pk)
+                        raise ValidationError(
+                            f"Recipe Deviation: '{bad_mat.name}' makes up {actual_ratio * Decimal('100'):.1f}% of the hopper mix, "
+                            f"but the recipe strictly requires {expected_ratio * Decimal('100'):.1f}%. "
+                            f"Please adjust your physical hopper weights before starting the machine."
+                        )
+        # ----------------------------------------------------
+
+        # (The Escrow Logic we built in Step 1 continues here...)
         for mat_id, parsed_amount in material_reservations:
             if mat_id and parsed_amount > Decimal('0'):
                 mat = RawMaterial.objects.select_for_update().get(id=mat_id)
-                if parsed_amount > mat.current_stock_kg:
-                    raise ValidationError(f"Insufficient stock. Attempted to reserve {parsed_amount}kg of {mat.name}, but only {mat.current_stock_kg}kg is available.")
+                
+                allocation, created = MaterialAllocation.objects.get_or_create(
+                    job_order=job_order,
+                    material=mat,
+                    defaults={
+                        'required_kg': Decimal('0'), 'allocated_kg': Decimal('0'), 
+                        'shortfall_kg': Decimal('0'), 'actual_used_kg': Decimal('0')
+                    }
+                )
+                
+                unconsumed_allocation = allocation.allocated_kg - allocation.actual_used_kg
+                
+                if parsed_amount > unconsumed_allocation:
+                    overage = parsed_amount - unconsumed_allocation
                     
-                mat.current_stock_kg -= parsed_amount
-                mat.save()
+                    if overage > mat.current_stock_kg:
+                        raise ValidationError(
+                            f"Insufficient stock. You need {parsed_amount}kg of {mat.name}, "
+                            f"but only {unconsumed_allocation:.2f}kg remains in the job allocation, "
+                            f"and the warehouse only has {mat.current_stock_kg:.2f}kg available."
+                        )
+                    
+                    mat.current_stock_kg -= overage
+                    mat.save(update_fields=['current_stock_kg'])
+                    
+                    allocation.allocated_kg += overage
+                    allocation.save(update_fields=['allocated_kg'])
                 
                 SessionMaterial.objects.create(
                     session=session, material=mat, reserved_kg=parsed_amount
@@ -541,11 +722,45 @@ class ExtrusionSession(models.Model):
             self.status = 'COMPLETED'
             self.end_time = timezone.now()
             
-            total_session_waste = self.total_wastage_kg + self.final_wastage_kg
+            # Add the wastage to the Job Order
+            total_session_waste = self.total_wastage_kg + getattr(self, 'final_wastage_kg', Decimal('0.00'))
+            
             JobOrder.objects.filter(pk=self.job_order.pk).update(
-                total_extruded_kg=F('total_extruded_kg') + self.total_output_kg,
                 total_extrusion_wastage_kg=F('total_extrusion_wastage_kg') + total_session_waste
             )
+            
+            # --- FIX #3: Proportional 'actual_used_kg' Deduction ---
+            deductions = getattr(self, 'returned_material_kg', Decimal('0')) + getattr(self, 'transferred_to_next_job_kg', Decimal('0'))
+            total_reserved = sum(sm.reserved_kg for sm in self.materials.all())
+            
+            # Order by material_id to strictly prevent database deadlocks during select_for_update
+            for sm in self.materials.order_by('material_id'):
+                used = sm.reserved_kg
+                
+                # If there are deductions and the hopper wasn't empty
+                if deductions > Decimal('0') and total_reserved > Decimal('0'):
+                    # Calculate this specific material's % share of the total hopper mix
+                    proportion = sm.reserved_kg / total_reserved
+                    
+                    # Deduct its exact proportional share of the returned/purged material
+                    material_deduction = deductions * proportion
+                    used -= material_deduction
+                    
+                    # Safety clamp just in case of microscopic floating-point anomalies
+                    if used < Decimal('0'):
+                        used = Decimal('0')
+                        
+                sm.actual_used_kg = used
+                sm.save(update_fields=['actual_used_kg'])
+                
+                # Push the final consumed amount up to the Job's Allocation Escrow
+                allocation = MaterialAllocation.objects.select_for_update().get(
+                    job_order=self.job_order, material=sm.material
+                )
+                allocation.actual_used_kg += sm.actual_used_kg
+                allocation.save(update_fields=['actual_used_kg'])
+            # --------------------------------------------------------------
+
             self.save()
             
             # --- YIELD ADAPTATION ---
@@ -554,6 +769,7 @@ class ExtrusionSession(models.Model):
                 actual_yield = self.total_output_kg / total_consumed
                 operator = self.operator_name or "System"
                 
+                from .models import Recipe 
                 Recipe.adapt_wastage_rate(
                     recipe_id=self.job_order.recipe_id,
                     stage='EXTRUSION',
@@ -561,8 +777,6 @@ class ExtrusionSession(models.Model):
                     session=self,
                     operator_name=operator
                 )
-            
-            return
             
     @transaction.atomic
     def terminate_early(self, operator_name):
@@ -614,6 +828,10 @@ class ExtrusionSession(models.Model):
 
     @transaction.atomic
     def purge_and_close(self, returned_kg, final_waste, force_discrepancy=False):
+        """
+        Protocol A: The Strict Reconciliation Gateway.
+        Safely reconciles material usage, flags discrepancies, and stops the session.
+        """
         if self.status != 'ACTIVE':
             raise ValidationError("Cannot close a session that is no longer active.")
 
@@ -634,12 +852,10 @@ class ExtrusionSession(models.Model):
         if force_discrepancy:
             self.unaccounted_variance_kg = variance
             
-        if returned_kg > Decimal('0'):
-            primary_material = self.materials.first()
-            if primary_material:
-                raw_mat = RawMaterial.objects.select_for_update().get(pk=primary_material.material.pk)
-                raw_mat.current_stock_kg += returned_kg
-                raw_mat.save()
+        # --- FIX: DIRECT WAREHOUSE REFUND REMOVED ---
+        # We no longer manually add returned_kg back to RawMaterial here.
+        # stop_session() handles the math so the returned amount stays in the Job's Escrow.
+        # When the JobOrder is closed, all unconsumed Escrow is cleanly refunded at once.
                 
         self.stop_session()
 
@@ -686,6 +902,9 @@ class ExtrusionLog(models.Model):
             return log
 
     def clean(self):
+        if getattr(self, 'session', None) and self.session.job_order.is_completed:
+            raise ValidationError("Cannot log output. The associated Job Order is fully closed and completed.")
+        
         if self.wastage_kg < Decimal('0') or self.wastage_kg > self.roll_weight_kg:
             raise ValidationError({'wastage_kg': 'Wastage cannot be negative or greater than the total roll weight.'})
         
@@ -813,6 +1032,12 @@ class CuttingLog(models.Model):
     output_kg = models.DecimalField(max_digits=8, decimal_places=2, validators=[MinValueValidator(Decimal('0.01'))])
 
     def clean(self):
+        if getattr(self, 'session', None):
+            if self.session.job_order.is_completed:
+                raise ValidationError("Cannot log output. The associated Job Order is fully closed and completed.")
+            if self.session.status != 'ACTIVE':
+                raise ValidationError("This machine session is no longer active.")
+            
         if self.session_id:
             if self.session.status != 'ACTIVE':
                 raise ValidationError("This machine session is no longer active.")
@@ -885,6 +1110,11 @@ class PackingLog(models.Model):
                 jo.complete_job()
                 
             return log
+        
+    def clean(self):
+        # NEW: Enforce the strict lockdown barrier
+        if getattr(self, 'job_order', None) and self.job_order.is_completed:
+            raise ValidationError("Cannot log packed goods. The associated Job Order is fully closed and completed.")
 
     def save(self, *args, **kwargs):
         is_new = self.pk is None
@@ -917,6 +1147,10 @@ class DispatchLog(models.Model):
     delivery_order_no = models.CharField(max_length=50, blank=True)
 
     def clean(self):
+        # Enforce no updates post-completion
+        if getattr(self, 'job_order', None) and self.job_order.is_completed:
+            raise ValidationError("Cannot log dispatch. This Job Order is already closed or completed.")
+            
         if self.shipped_kg <= Decimal('0'):
             raise ValidationError({'shipped_kg': 'Shipped quantity must be greater than zero.'})
             
@@ -929,7 +1163,14 @@ class DispatchLog(models.Model):
         self.clean()
         is_new = self.pk is None
         super().save(*args, **kwargs)
+        
         if is_new:
+            # Safely increment the shipped total
             JobOrder.objects.filter(pk=self.job_order.pk).update(
                 total_shipped_kg=F('total_shipped_kg') + self.shipped_kg
             )
+            
+            # Auto-trigger completion evaluation
+            # If the shipment falls short, it will cleanly abort and the job remains open.
+            jo = JobOrder.objects.get(pk=self.job_order.pk)
+            jo.complete_job()

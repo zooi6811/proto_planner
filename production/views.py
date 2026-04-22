@@ -787,3 +787,27 @@ def get_job_specs(request, jo_id):
 def custom_logout(request):
     django_logout(request)
     return redirect('login')
+
+@require_logging_permission
+def force_close_job(request, jo_id):
+    if request.method == "POST":
+        job = get_object_or_404(JobOrder, id=jo_id)
+        
+        # Security: Strictly restrict this to Staff/Supervisors
+        if hasattr(request.user, 'profile') and request.user.profile.role != 'STAFF':
+            error_toast = render_toast("Unauthorised: Only Management or Staff can authorise a forced closure.", "error", use_oob=False)
+            return HttpResponse(error_toast)
+            
+        operator = request.user.username if request.user.is_authenticated else "System"
+        
+        # Attempt the closure with force_close=True
+        success, message = job.complete_job(operator_name=operator, force_close=True)
+        
+        if success:
+            # Tell the frontend to refresh the active jobs tab
+            success_toast = render_toast(message, "success", use_oob=False)
+            response = HttpResponse(success_toast)
+            return trigger_refresh(response, f"/control-tower/", "body")
+        else:
+            error_toast = render_toast(message, "error", use_oob=False)
+            return HttpResponse(error_toast)

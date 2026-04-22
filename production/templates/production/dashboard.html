@@ -29,29 +29,8 @@
     </style>
 </head>
 
-<body hx-ext="django-htmx, ws" ws-connect="/ws/live/">
+<body hx-ext="django-htmx>
     <div id="ws-bridge"></div>
-
-    <script>
-        // Listen for the native HTMX WebSocket event
-        document.body.addEventListener('htmx:wsAfterMessage', function(e) {
-            
-            // Find the active search bar (which inherently knows the current department and target)
-            var searchInput = document.querySelector('input[name="q"]');
-            
-            if (searchInput) {
-                var url = searchInput.getAttribute('hx-get');
-                var targetId = searchInput.getAttribute('hx-target');
-                var query = searchInput.value || '';
-                
-                if (url && targetId) {
-                    // Directly command HTMX to fetch the freshly sorted queue and swap it in quietly
-                    htmx.ajax('GET', url + '&q=' + encodeURIComponent(query), {target: targetId});
-                }
-            }
-        });
-    </script>
-
     <nav class="top-nav">
         <div class="nav-brand">
             PROTO-PLANNER <span style="color: var(--action-blue);">ERP</span>
@@ -141,39 +120,65 @@
                 });
             }
         });
-        document.body.addEventListener('htmx:wsAfterMessage', function(e) {
-        // 1. Refresh the Priority Queue (Job List)
-        const searchInput = document.querySelector('input[name="q"]');
-        if (searchInput) {
-            const url = searchInput.getAttribute('hx-get');
-            const targetId = searchInput.getAttribute('hx-target');
-            const query = searchInput.value || '';
-            htmx.ajax('GET', url + '&q=' + encodeURIComponent(query), {target: targetId});
-        }
+        // 1. Initialise the native WebSocket connection (Matches Control Tower)
+        const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+        const factorySocket = new WebSocket(
+            protocol + window.location.host + '/ws/live/'
+        );
 
-        // 2. Refresh the Active Machine State (if any machine is selected)
-        // This handles the "Operator Screen" updates when logs are added elsewhere
-        const machineSelect = document.querySelector('select[name="machine_no"]');
-        if (machineSelect && machineSelect.value) {
-            const activeMachine = machineSelect.value;
-            const currentTab = document.querySelector('.tab-btn.active').innerText.toLowerCase();
-            
-            let refreshUrl = "";
-            let refreshTarget = "";
+        // 2. Listen for broadcasts from the server
+        factorySocket.onmessage = function(e) {
+            try {
+                const data = JSON.parse(e.data);
+                
+                // If the server tells us a job was updated or created...
+                if (data.type === 'softRefresh' || data.type === 'job_update') {
+                    
+                    // A. Refresh the Priority Queue (Job List) quietly
+                    const searchInput = document.querySelector('input[name="q"]');
+                    if (searchInput) {
+                        const url = searchInput.getAttribute('hx-get');
+                        const targetId = searchInput.getAttribute('hx-target');
+                        const query = searchInput.value || '';
+                        
+                        if (url && targetId) {
+                            htmx.ajax('GET', url + '&q=' + encodeURIComponent(query), {target: targetId});
+                        }
+                    }
 
-            if (currentTab.includes("extrusion")) {
-                refreshUrl = `/load-machine-state/${activeMachine}/`;
-                refreshTarget = "#machine-workspace";
-            } else if (currentTab.includes("cutting")) {
-                refreshUrl = `/load-cutting-state/${activeMachine}/`;
-                refreshTarget = "#cutting-workspace";
+                    // B. Refresh the Active Machine State (if an operator is currently viewing a machine)
+                    const machineSelect = document.querySelector('select[name="machine_no"]');
+                    if (machineSelect && machineSelect.value) {
+                        const activeMachine = machineSelect.value;
+                        const currentTabBtn = document.querySelector('.tab-btn.active');
+                        
+                        if (currentTabBtn) {
+                            const currentTab = currentTabBtn.innerText.toLowerCase();
+                            let refreshUrl = "";
+                            let refreshTarget = "";
+
+                            if (currentTab.includes("extrusion")) {
+                                refreshUrl = `/load-machine-state/${activeMachine}/`;
+                                refreshTarget = "#machine-workspace";
+                            } else if (currentTab.includes("cutting")) {
+                                refreshUrl = `/load-cutting-state/${activeMachine}/`;
+                                refreshTarget = "#cutting-workspace";
+                            }
+
+                            if (refreshUrl) {
+                                htmx.ajax('GET', refreshUrl, {target: refreshTarget});
+                            }
+                        }
+                    }
+                }
+            } catch (err) {
+                console.error("Error parsing WebSocket message:", err);
             }
+        };
 
-            if (refreshUrl) {
-                htmx.ajax('GET', refreshUrl, {target: refreshTarget});
-            }
-        }
-    });
+        factorySocket.onclose = function(e) {
+            console.error('Factory socket closed unexpectedly.');
+        };
     </script>
 </body>
 </html>
